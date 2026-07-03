@@ -12,7 +12,7 @@ It is a small, model-agnostic governance layer that sits under any agent's tool 
 deny-by-default gate  ->  Seatbelt jail  ->  tamper-evident ledger  ->  verifiable receipt
 ```
 
-~2,300 lines of pure Python across 14 modules (+ a small `adapters/` subpackage), standard-library only — **zero third-party dependencies in the core.** Install: `pip install deponent`.
+~3,300 lines of pure Python across 17 modules (+ a small `adapters/` subpackage), standard-library only — **zero third-party dependencies in the core.** Install: `pip install deponent`.
 
 ---
 
@@ -114,7 +114,7 @@ State the limits, or the guarantees mean nothing.
 
 ## Proven
 
-**105 tests passing** on system Python 3 (pytest) — 113 total; 8 skip on a plain macOS host (6 Docker-backend tests need a daemon; 1 compliance-export and 1 sworncode-adapter test whose modules are optional extras). Off-macOS the live Seatbelt jail tests also skip — run `make test` to see your host's number. Breakdown (collected):
+**146 tests total** across 15 files. On this macOS host (Docker + optional extras present) `make test` gives **144 pass / 2 skip** — the 2 skips are optional-dependency paths (compliance-export backend; sworncode adapter), never failures. A plain macOS host without Docker skips the 6 Docker-backend tests too, and off-macOS the live Seatbelt jail tests skip — so the pass/skip split is honestly host-dependent. Run `make test` to see your host's number. Breakdown (collected):
 
 | module | tests | what it proves |
 |---|---:|---|
@@ -126,6 +126,8 @@ State the limits, or the guarantees mean nothing.
 | `reconcile.py` | 8 | two-plane observed-vs-declared: an undeclared change is caught, not the agent's word |
 | `receipts.py` | 7 | recompute-not-trust verifier; corrupt write raises; tampered chain or metadata → `False` |
 | `conformance.py` | 10 | GAK conformance harness: scores any kernel pass/fail against the standard — across two profiles, action-gate **and** commit-gate |
+| `badge.py` | 12 | the earnable `GAK-conformant` mark: certify/verify, reproducible `clauses_digest`, red when not conformant (a badge that can't be faked) |
+| `playground.py` | 21 | the public playground: score any agent trace against the real kernel, per-clause pass/fail |
 | `profiles.py` | 6 | build-profile policy: reversible/local ALLOW, irreversible BLOCK (blast-radius-scoped) |
 | `operator_attest.py` | 6 | optional verification-only ed25519 overlay; emits a cell only on a passing verification |
 | `cell.py` | 6 | gate → jail → ledger wiring; one `.act()` = one testified action |
@@ -176,7 +178,7 @@ DEPONENT_MLX_MODEL=mlx-community/North-Mini-Code-1.0-4bit \
 git clone <repo> deponent && cd deponent
 python3 -m pip install -e .        # or just run from the repo — the core needs no install
 
-make test                          # 113 tests (105 pass; Docker/jail/attest/sworncode paths auto-skip)
+make test                          # 146 tests (144 pass / 2 skip on this host; Docker/jail/attest/sworncode paths auto-skip, count is host-dependent)
 make demo                          # the minimal testify demo, no model needed
 ```
 
