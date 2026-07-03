@@ -68,6 +68,34 @@ class TestGateBlock(unittest.TestCase):
     def test_block_unallowlisted_program(self):
         self.assertEqual(self.gate.evaluate("run_cmd", {"cmd": "make install"}).verdict, "BLOCK")
 
+    # --- regression: shell-redirect + newline containment bypasses (2026-07-03 audit) ---
+    # A no-space redirect glues the target to the operator so shlex yields one
+    # relative-looking token that slipped past path containment and got ALLOWed,
+    # writing outside the sandbox under shell=True. Deny the redirect class wholesale.
+    def test_block_redirect_glued_out_of_sandbox(self):
+        d = self.gate.evaluate("run_cmd", {"cmd": "echo pwned>>/tmp/evil.txt"})
+        self.assertEqual(d.verdict, "BLOCK")
+        self.assertEqual(d.blast_class, "shell-redirect")
+
+    def test_block_redirect_spaced(self):
+        self.assertEqual(
+            self.gate.evaluate("run_cmd", {"cmd": "echo pwned > /tmp/evil.txt"}).verdict, "BLOCK")
+
+    def test_block_read_redirect(self):
+        self.assertEqual(
+            self.gate.evaluate("run_cmd", {"cmd": "cat </etc/passwd"}).verdict, "BLOCK")
+
+    # A newline is a shell command separator; without splitting on it the second
+    # line's program head skipped the allowlist (`echo ok\nshred x` ran `shred`).
+    def test_block_newline_second_command(self):
+        d = self.gate.evaluate("run_cmd", {"cmd": "echo ok\nshred secret"})
+        self.assertEqual(d.verdict, "BLOCK")
+
+    # Positive control: the fix must not brick legitimate in-sandbox execution.
+    def test_allow_legit_inbounds_still_allows(self):
+        for cmd in ("echo hi", "ls", "python3 run.py"):
+            self.assertEqual(self.gate.evaluate("run_cmd", {"cmd": cmd}).verdict, "ALLOW", cmd)
+
 
 if __name__ == "__main__":
     unittest.main()

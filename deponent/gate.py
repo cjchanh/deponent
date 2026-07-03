@@ -18,7 +18,8 @@ SECURITY POSTURE (read this — it is a feature, not a disclaimer):
   Fail-closed    : unknown tool / unclassifiable command / path escape -> BLOCK.
   Covered        : path traversal out of the sandbox (read + write); a curated
                    program allowlist (heads) + denylist (irreversible, network,
-                   privilege, out-of-tree); shell chaining / command substitution.
+                   privilege, out-of-tree); shell chaining, command substitution,
+                   shell redirects, and newline-separated commands.
   NOT covered    : in-language execution — an ALLOWed `python`/`pytest` can still
                    run arbitrary Python *inside* the sandbox dir. That gap is
                    closed by jail.py (Seatbelt: no network, writes confined). Use
@@ -64,8 +65,16 @@ ALLOW_HEADS = frozenset({
     "ls", "cat", "head", "tail", "pwd", "echo", "grep", "wc",
     "mkdir", "touch", "diff", "true", "sort", "uniq",
 })
-_CHAIN_SPLIT = re.compile(r"\s*(?:&&|\|\||;|\|)\s*")
+# Command separators. Newline/CR are shell separators too — without them a second
+# LINE's program head would skip the allowlist (an agent smuggling `echo ok\nshred x`).
+_CHAIN_SPLIT = re.compile(r"\s*(?:&&|\|\||;|\||\n|\r)\s*")
 _SUBST = ("$(", "`", "${")
+# Shell redirects write/read arbitrary host paths the gate cannot reliably extract
+# from the token stream (a target glued to the operator, e.g. `x>>/etc/p`, tokenizes
+# as one relative-looking arg and slips past path containment). Deny-by-default:
+# block the redirect class wholesale — legitimate writes go through the gated
+# `write_file` tool, not a shell redirect.
+_REDIR = (">", "<")
 
 
 class Gate:
@@ -134,6 +143,9 @@ class Gate:
                 return GateDecision("BLOCK", "destructive-or-out-of-scope", f"matched deny pattern {bad!r}")
         if any(s in cmd for s in _SUBST):
             return GateDecision("BLOCK", "command-substitution", "shell substitution/expansion not allowed")
+        if any(r in cmd for r in _REDIR):
+            return GateDecision("BLOCK", "shell-redirect",
+                                "shell redirection not allowed; use the write_file tool for gated writes")
         # every chained segment's program head must be allowlisted
         for seg in _CHAIN_SPLIT.split(cmd):
             seg = seg.strip()
