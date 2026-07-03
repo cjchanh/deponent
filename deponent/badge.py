@@ -12,10 +12,17 @@ TRADEMARKS.md the mark is a property of the standard, NOT a use of the "Deponent
 name: any kernel that passes the clause set may claim it, including kernels that are
 not Deponent and not from CDS.
 
-HONESTY (a badge that can be faked is worthless):
+HONESTY (the badge is only as good as the adapter behind it):
   - The green "conformant" badge is emitted ONLY when run_conformance actually
     passes. A non-conformant kernel gets a RED "not conformant" badge — never a
-    green one. The mark is earned, not asserted.
+    green one. The mark is earned by the harness, not asserted.
+  - BUT the harness scores an ADAPTER, and — like every conformance suite — it
+    cannot tell a real kernel from an adapter that hardcodes the expected verdict
+    strings without doing the work. Per the adapter contract, adapters MUST drive
+    the REAL kernel, not a simulation; a fabricated adapter earns a mark that is
+    void. The badge attests "this ADAPTER passed the clauses", which is only a
+    claim about the KERNEL if the adapter is honest. Trust the digest + the source,
+    not the color alone.
   - The certification carries a `clauses_digest` (sha256 of the per-clause id+status
     set), so a consumer can VERIFY the badge corresponds to a specific, reproducible
     clause outcome — not a hand-edited image.

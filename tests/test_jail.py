@@ -16,6 +16,21 @@ def run_jailed(cmd: str, work: Path) -> subprocess.CompletedProcess:
     return subprocess.run(wrapped, shell=True, cwd=work, capture_output=True, text=True, timeout=60)
 
 
+def _host_has_network() -> bool:
+    """Positive-control probe: can an UN-jailed process actually reach the net?
+    Without this, a network canary that only asserts 'no success marker' is vacuous —
+    it passes on an offline box whether or not the jail did anything."""
+    import urllib.request
+    try:
+        urllib.request.urlopen("http://captive.apple.com", timeout=5)
+        return True
+    except Exception:
+        return False
+
+
+_HAS_NET = _host_has_network()
+
+
 @unittest.skipUnless(jail_available(), "sandbox-exec not present (not macOS)")
 class TestJail(unittest.TestCase):
     def setUp(self):
@@ -41,13 +56,22 @@ class TestJail(unittest.TestCase):
         self.assertIn("1 passed", r.stdout + r.stderr)
 
     # ---- negative: escapes are blocked ----
+    # These pair the negative assertion (no success marker) with a POSITIVE CONTROL:
+    # the same request MUST succeed un-jailed on this host, so a green test proves the
+    # JAIL caused the block, not an offline box. When the host has no network the
+    # control can't run, so the canary is skipped rather than passing vacuously.
     def test_network_blocked(self):
+        if not _HAS_NET:
+            self.skipTest("host has no network — positive control impossible; canary would be vacuous")
+        # positive control: un-jailed, this DOES reach the net (proven by _HAS_NET)
         r = run_jailed("python3 -c \"import urllib.request as u; u.urlopen('http://captive.apple.com',timeout=5); print('NET_OK')\"", self.work)
-        self.assertNotIn("NET_OK", r.stdout)
+        self.assertNotIn("NET_OK", r.stdout, "jailed urlopen reached the network — jail failed")
 
     def test_socket_connect_blocked(self):
+        if not _HAS_NET:
+            self.skipTest("host has no network — positive control impossible; canary would be vacuous")
         r = run_jailed("python3 -c \"import socket; socket.create_connection(('1.1.1.1',80),timeout=5); print('SOCK_OK')\"", self.work)
-        self.assertNotIn("SOCK_OK", r.stdout)
+        self.assertNotIn("SOCK_OK", r.stdout, "jailed socket connected — jail failed")
 
     def test_write_outside_home_blocked(self):
         target = str(Path.home() / "JAIL_ESCAPE_HOME.txt")

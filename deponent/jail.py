@@ -11,11 +11,20 @@ platform **Backend**, selected fail-closed:
   - Linux  -> DockerBackend (bwrap/nsjail native backend is a follow-up; draft).
   - other  -> DockerBackend (draft, not yet live-verified).
 
-Every backend enforces the SAME contract: network denied (no exfil), file-writes
-confined to the sandbox dir (no tamper/persistence), resources bounded (memory +
-wall-clock), reads otherwise inert. And the dispatch is FAIL-CLOSED: if no backend
-can confine on this host, `run_jailed` REFUSES (`killed="no-jail"`) rather than run
-the command un-jailed. `jail_available()` is the check; never execute on a False.
+Every backend enforces the SAME contract: the jailed process's OWN network egress
+is denied (it cannot open a socket, resolve DNS, or call out), file-writes are
+confined to the sandbox dir (no tamper/persistence), and resources are bounded
+(memory + wall-clock). And the dispatch is FAIL-CLOSED: if no backend can confine
+on this host, `run_jailed` REFUSES (`killed="no-jail"`) rather than run the command
+un-jailed. `jail_available()` is the check; never execute on a False.
+
+NOT an exfiltration boundary — be honest about the read surface: the jail restricts
+WRITES, not READS. A jailed process can still READ host files outside the sandbox
+(e.g. ~/.ssh, ~/.aws) and return their contents via stdout to the caller, which is
+un-jailed and may have network. The jail stops the sandboxed process from *calling
+out*; it does NOT stop it from *reading a secret and handing it back*. If the host
+filesystem holds secrets an untrusted command must not read, confine the reads too
+(a stricter Seatbelt profile or a scratch-only container) — this default does not.
 
 VERIFICATION STATUS — claims track what has actually RUN (self-report is not evidence):
   - Seatbelt: live-verified by tests/test_jail.py — escape-proofs against the real
