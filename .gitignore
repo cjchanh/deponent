@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Test / tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Deponent runtime artifacts (never commit receipts or live ledgers)
+.deponent/
+receipts/
+runs/
+*.jsonl
+.jail.sb
+.tmp/
+.run_out
+
+# OS
+.DS_Store

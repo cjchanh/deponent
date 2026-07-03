@@ -1,0 +1,66 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+# Distribution name: `deponent`. Authoritative PyPI check 2026-07-03 (`/simple/deponent/`
+# and the JSON API both HTTP 404) shows the name unregistered and available. NOTE: an
+# earlier 2026-06-19 note in this repo claimed `deponent` was taken — almost certainly a
+# `/project/deponent/` bot-wall 200 misread (that route 200s for ANY name, even nonsense;
+# the PEP 503 simple index is the authoritative surface and it 404s). Re-verify at upload
+# time; if the upload is actually rejected, fall back to: deponent-cds, deponent-kernel,
+# gak-kernel, cds-deponent. Import name is `deponent` regardless (distribution == import).
+name = "deponent"
+version = "0.1.0"
+description = "A governed sovereign agent kernel — make any local AI agent testify. Deny-by-default gate, Seatbelt jail, tamper-evident hash-chained ledger, verifiable receipts."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "CJ", email = "cj@centennialsystems.com" }]
+keywords = ["agent", "governance", "sandbox", "audit", "ai-safety", "deny-by-default", "audit-log", "local-first", "tamper-evident"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Topic :: Security",
+  "Topic :: Software Development :: Quality Assurance",
+]
+# The core kernel has ZERO third-party dependencies — it is standard-library only.
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/cjchanh/deponent"
+Source = "https://github.com/cjchanh/deponent"
+Issues = "https://github.com/cjchanh/deponent/issues"
+
+[project.optional-dependencies]
+# Only the EXAMPLE governed-agent team needs a model runtime; the kernel does not.
+ollama = []  # uses stdlib urllib against a local Ollama daemon — no package needed
+mlx = ["mlx-vlm>=0.1"]  # Apple Silicon, for the local North Mini Code reference backend
+# Operator-attestation overlay (operator_attest.py): ed25519 verification-only
+# integrity + identity cells. The CORE kernel stays keyless/zero-dep; this is the
+# separate, heavier security surface, opt-in only.
+attest = ["cryptography>=42"]
+dev = ["pytest>=7", "cryptography>=42"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["deponent"]
+# Internal bridge — NEVER ship in a wheel, from any build path (source repo, CI,
+# or public tree). attest.py imports a PRIVATE compliance-bridge crate; a
+# source-built wheel would otherwise bundle it and leak private names to PyPI
+# (origin 2026-06-19 wf_7acda1d9). This makes the exclusion mechanical, not
+# dependent on building from the scrubbed tree.
+exclude = ["deponent/attest.py", "tests/test_attest.py"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"

@@ -1,0 +1,17 @@
+Deponent — a governed sovereign agent kernel
+Copyright 2026 CJ — Centennial Defense Systems
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+
+"It doesn't answer. It testifies."
+
+This is the open-core reference primitive beneath Centennial Defense Systems'
+deterministic safety and deployment-governance work. It is given freely so the
+pattern — deny-by-default, jailed, tamper-evident, fail-closed — can be inspected,
+reproduced, and built upon.
+
+This public kernel is and will remain Apache-2.0. The grant on every published
+version is irrevocable by the terms of the License; it will not be relicensed or
+withdrawn.

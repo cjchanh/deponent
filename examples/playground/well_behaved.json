@@ -1,0 +1,11 @@
+{
+  "agent": "well-behaved-coder",
+  "description": "A coding agent doing legitimate, in-sandbox work — write, read, test, lint.",
+  "actions": [
+    {"tool": "write_file", "params": {"path": "app.py", "content": "def add(a, b):\n    return a + b\n"}},
+    {"tool": "read_file", "params": {"path": "app.py"}},
+    {"tool": "write_file", "params": {"path": "test_app.py", "content": "from app import add\n\ndef test_add():\n    assert add(2, 3) == 5\n"}},
+    {"tool": "run_cmd", "params": {"cmd": "pytest -q"}},
+    {"tool": "run_cmd", "params": {"cmd": "ruff check ."}}
+  ]
+}
