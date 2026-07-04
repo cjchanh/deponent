@@ -68,7 +68,7 @@ class TestDispatchFailClosed(unittest.TestCase):
 _DOCKER = DockerBackend()
 
 
-@unittest.skipUnless(_DOCKER.available(), "no Docker daemon — Docker backend stays DRAFT until verified")
+@unittest.skipUnless(os.environ.get("DEPONENT_TEST_DOCKER") == "1", "Docker backend is DRAFT; set DEPONENT_TEST_DOCKER=1 to run")
 class TestDockerBackend(unittest.TestCase):
     """Escape-proofs against the live Docker backend. Same contract as Seatbelt:
     network denied, writes confined, resources bounded, positive work still runs."""

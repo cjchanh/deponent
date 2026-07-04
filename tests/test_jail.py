@@ -8,7 +8,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from deponent.jail import jail_available, jail_command, run_jailed as sb_run_jailed
+from deponent.jail import SANDBOX_EXEC, jail_available, jail_command, run_jailed as sb_run_jailed
+
+# Guard Seatbelt-specific tests on Seatbelt (macOS sandbox-exec) specifically — NOT
+# jail_available(), which is True on any host with a Docker backend and so lets these
+# Seatbelt-only tests run (and fail closed) on Linux CI.
+_SEATBELT_OK = os.path.exists(SANDBOX_EXEC) and os.access(SANDBOX_EXEC, os.X_OK)
 
 
 def run_jailed(cmd: str, work: Path) -> subprocess.CompletedProcess:
@@ -31,7 +36,7 @@ def _host_has_network() -> bool:
 _HAS_NET = _host_has_network()
 
 
-@unittest.skipUnless(jail_available(), "sandbox-exec not present (not macOS)")
+@unittest.skipUnless(_SEATBELT_OK, "Seatbelt sandbox-exec not present (not macOS)")
 class TestJail(unittest.TestCase):
     def setUp(self):
         self.work = Path(tempfile.mkdtemp(prefix="jailtest-"))
@@ -96,7 +101,7 @@ class TestJail(unittest.TestCase):
         self.assertFalse(os.path.exists(target), "child process escaped the sandbox!")
 
 
-@unittest.skipUnless(jail_available(), "sandbox-exec not present (not macOS)")
+@unittest.skipUnless(_SEATBELT_OK, "Seatbelt sandbox-exec not present (not macOS)")
 class TestMemoryWatchdog(unittest.TestCase):
     def setUp(self):
         self.work = Path(tempfile.mkdtemp(prefix="memtest-"))
@@ -132,7 +137,7 @@ class TestMemoryWatchdog(unittest.TestCase):
 
 
 class TestFailClosed(unittest.TestCase):
-    @unittest.skipUnless(jail_available(), "sandbox-exec not present (not macOS)")
+    @unittest.skipUnless(_SEATBELT_OK, "Seatbelt sandbox-exec not present (not macOS)")
     def test_jail_command_contains_sandbox_exec(self):
         from deponent.jail import SANDBOX_EXEC
         work = Path(tempfile.mkdtemp())
@@ -141,16 +146,21 @@ class TestFailClosed(unittest.TestCase):
         self.assertIn("ulimit", wrapped)
 
     def test_run_jailed_fails_closed_when_unavailable(self):
-        # Simulate "no jail" by pointing the check at a missing binary.
+        # Force "no jail backend" deterministically across platforms: the Seatbelt
+        # binary missing AND no backend selectable — otherwise a Docker host would
+        # pick the Docker backend and this would not fail closed.
         import deponent.jail as J
-        original = J.SANDBOX_EXEC
+        original_sb = J.SANDBOX_EXEC
+        original_sel = J.select_backend
         try:
             J.SANDBOX_EXEC = "/nonexistent/sandbox-exec"
+            J.select_backend = lambda: None
             r = J.run_jailed("ls", Path(tempfile.mkdtemp()))
             self.assertEqual(r["killed"], "no-jail")
             self.assertIsNone(r["returncode"])
         finally:
-            J.SANDBOX_EXEC = original
+            J.SANDBOX_EXEC = original_sb
+            J.select_backend = original_sel
 
 
 if __name__ == "__main__":
