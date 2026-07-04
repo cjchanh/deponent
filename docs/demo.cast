@@ -1,0 +1,12 @@
+{"version":3,"term":{"cols":80,"rows":24},"timestamp":1783128227,"command":"python3 examples/demo.py","env":{"SHELL":"/bin/zsh"}}
+[0.038, "o", "\r\n  deponent — an AI agent proposes actions; the gate governs each one.\r\n\r\n"]
+[0.607, "o", "    ALLOW  write_file       reversible-local-write       # in-sandbox\r\n"]
+[0.502, "o", "    BLOCK  run_cmd          destructive-or-out-of-scope  # the footgun\r\n"]
+[0.505, "o", "    BLOCK  run_cmd          destructive-or-out-of-scope  # exfil attempt\r\n"]
+[0.502, "o", "    BLOCK  delete_database  unknown-tool                 # never seen it\r\n"]
+[0.504, "o", "\r\n  every decision is on a tamper-evident sha256 chain:\r\n"]
+[0.501, "o", "    ledger.verify()  ->  True   (chain intact (4 entries))\r\n"]
+[0.605, "o", "\r\n  now try to forge the record — flip a recorded BLOCK to ALLOW:\r\n"]
+[0.502, "o", "    ledger.verify()  ->  False   (entry 1: hash mismatch (tampered))\r\n"]
+[0.703, "o", "\r\n  It doesn't answer. It testifies.\r\n\r\n"]
+[0.512, "x", "0"]

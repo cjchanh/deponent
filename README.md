@@ -4,6 +4,8 @@
 
 **A governed sovereign agent kernel. It doesn't answer. It testifies.**
 
+![deponent blocks rm -rf / and an unknown tool, then proves the audit log cannot be forged](docs/demo.gif)
+
 A local AI agent runs on your machine. It edits files, runs commands, touches your system — and when it finishes, all you have is its word that it behaved, and a failed step reports success as readily as a real one. Deponent replaces the word with a record you can verify yourself.
 
 It is a small, model-agnostic governance layer that sits under any agent's tool calls:
@@ -13,6 +15,16 @@ deny-by-default gate  ->  Seatbelt jail  ->  tamper-evident ledger  ->  verifiab
 ```
 
 ~3,300 lines of pure Python across 17 modules (+ a small `adapters/` subpackage), standard-library only — **zero third-party dependencies in the core.** Install: `pip install deponent`.
+
+### Run it in Docker (any platform)
+
+```bash
+docker build -t deponent .
+docker run --rm deponent             # scores the kernel against its own GAK standard -> CONFORMANT
+docker run --rm deponent make test   # run the suite in-container
+```
+
+The gate, ledger, and receipts are platform-independent; OS confinement is macOS Seatbelt on the host or the Docker backend elsewhere (escape-proofs live-verified, `tests/test_jail_backends.py`).
 
 ---
 

@@ -1,0 +1,32 @@
+# Mirror the publish scrub (build_public_tree.py) so an image built from ANY context
+# — even the private source tree — can never bake in the internal/coupled files.
+# Belt-and-suspenders: the public repo already excludes these; this keeps the image
+# clean regardless of build context.
+deponent/attest.py
+tests/test_attest.py
+deponent/adapters/provenant_rs.py
+PUBLISH_MANIFEST.md
+PUBLISH_CHECKLIST.md
+PLAN.md
+README_SDK.md
+API_SURFACE.md
+docs/RUST_ADAPTER_SPEC.md
+scripts/build_public_tree.py
+scripts/verify_wheel.py
+ANNOUNCEMENTS.md
+
+# build noise — use **/ so NESTED dirs are matched too (a bare `__pycache__/` only
+# matches root level, which let a compiled deponent/__pycache__/attest.*.pyc leak in).
+.git
+.venv
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/attest*                 # belt: no attest source OR bytecode, at any depth
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+runs/
+.DS_Store
