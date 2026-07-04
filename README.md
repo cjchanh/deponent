@@ -1,6 +1,6 @@
 # Deponent
 
-[![deponent: conformant](docs/deponent-badge.svg)](#proven) &nbsp;·&nbsp; **Apache-2.0** &nbsp;·&nbsp; verify the mark yourself: `python3 -m deponent.badge verify --kernel deponent`
+[![deponent: conformant](docs/deponent-badge.svg)](#proven) &nbsp;·&nbsp; [![CI](https://github.com/cjchanh/deponent/actions/workflows/ci.yml/badge.svg)](https://github.com/cjchanh/deponent/actions/workflows/ci.yml) &nbsp;·&nbsp; **Apache-2.0** &nbsp;·&nbsp; verify the mark yourself: `python3 -m deponent.badge verify --kernel deponent`
 
 **A governed sovereign agent kernel. It doesn't answer. It testifies.**
 
