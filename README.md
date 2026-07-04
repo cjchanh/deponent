@@ -16,16 +16,6 @@ deny-by-default gate  ->  Seatbelt jail  ->  tamper-evident ledger  ->  verifiab
 
 ~3,300 lines of pure Python across 17 modules (+ a small `adapters/` subpackage), standard-library only — **zero third-party dependencies in the core.** Install: `pip install deponent`.
 
-### Run it in Docker (any platform)
-
-```bash
-docker build -t deponent .
-docker run --rm deponent             # scores the kernel against its own GAK standard -> CONFORMANT
-docker run --rm deponent make test   # run the suite in-container
-```
-
-The gate, ledger, and receipts are platform-independent; OS confinement is macOS Seatbelt on the host or the Docker backend elsewhere (escape-proofs live-verified, `tests/test_jail_backends.py`).
-
 ---
 
 ## Quickstart
@@ -126,11 +116,11 @@ State the limits, or the guarantees mean nothing.
 
 ## Proven
 
-**146 tests total** across 15 files. On this macOS host (Docker + optional extras present) `make test` gives **144 pass / 2 skip** — the 2 skips are optional-dependency paths (compliance-export backend; sworncode adapter), never failures. A plain macOS host without Docker skips the 6 Docker-backend tests too, and off-macOS the live Seatbelt jail tests skip — so the pass/skip split is honestly host-dependent. Run `make test` to see your host's number. Breakdown (collected):
+**153 tests total** across 15 files. On this macOS host (Docker + optional extras present) `make test` gives **151 pass / 2 skip** — the 2 skips are optional-dependency paths (compliance-export backend; sworncode adapter), never failures. A plain macOS host without Docker skips the 6 Docker-backend tests too, and off-macOS the live Seatbelt jail tests skip — so the pass/skip split is honestly host-dependent. Run `make test` to see your host's number. Breakdown (collected):
 
 | module | tests | what it proves |
 |---|---:|---|
-| `gate.py` | 13 | deny-by-default; path-escape BLOCK; destructive/network/privilege BLOCK; chaining + command-substitution BLOCK; allowlist ALLOW |
+| `gate.py` | 18 | deny-by-default; path-escape BLOCK; destructive/network/privilege BLOCK; chaining + command-substitution BLOCK; allowlist ALLOW |
 | `jail.py` | 14 | network denied, writes confined, resource caps enforced — **against the real macOS sandbox, live** |
 | `jail_backends.py` | 10 | backend dispatch + confinement contract (Seatbelt live; Docker when a daemon is present) |
 | `claims.py` | 15 | claim-mode: the run testifies what it can/cannot attest — ATTESTED inside coverage, ABSTAIN outside |
@@ -144,7 +134,7 @@ State the limits, or the guarantees mean nothing.
 | `operator_attest.py` | 6 | optional verification-only ed25519 overlay; emits a cell only on a passing verification |
 | `cell.py` | 6 | gate → jail → ledger wiring; one `.act()` = one testified action |
 | `selfgate.py` | 4 | the kernel governs its OWN build (`make self-gate-live`) and stays conformant + sound |
-| `ledger.py` | 4 | hash chain links; mutation/reorder breaks `verify()` with a location |
+| `ledger.py` | 6 | hash chain links; mutation/reorder breaks `verify()` with a location |
 
 The jail tests invoke the **real macOS sandbox (`sandbox-exec`) live — not mocked** — and skip automatically off-macOS. **It eats its own dog food:** `make self-gate-live` runs a real jailed git+rustc build through the gate, jail, and ledger (local commit ALLOWs, push BLOCKs at the irreversible boundary) and emits receipts for the run. And it's testable as a standard: `python3 -m deponent.conformance` scores the reference kernel pass/fail against the GAK clause set — across two governance shapes, action-gate kernels and commit-gate kernels (the latter via `sworn_adapter.py`, an optional adapter for the commit-time sibling sworncode; the core never imports it). Point it at your own kernel too.
 
@@ -190,11 +180,21 @@ DEPONENT_MLX_MODEL=mlx-community/North-Mini-Code-1.0-4bit \
 git clone <repo> deponent && cd deponent
 python3 -m pip install -e .        # or just run from the repo — the core needs no install
 
-make test                          # 146 tests (144 pass / 2 skip on this host; Docker/jail/attest/sworncode paths auto-skip, count is host-dependent)
+make test                          # 153 tests (151 pass / 2 skip on this host; Docker/jail/attest/sworncode paths auto-skip, count is host-dependent)
 make demo                          # the minimal testify demo, no model needed
 ```
 
 The kernel has **zero third-party dependencies.** Only the example team needs a model runtime; the kernel does not.
+
+### Run it in Docker (any platform)
+
+```bash
+docker build -t deponent .
+docker run --rm deponent             # scores the kernel against its own GAK standard -> CONFORMANT
+docker run --rm deponent make test   # run the suite in-container
+```
+
+The gate, ledger, and receipts are platform-independent; OS confinement is macOS Seatbelt on the host or the Docker backend elsewhere (escape-proofs live-verified, `tests/test_jail_backends.py`).
 
 ---
 
