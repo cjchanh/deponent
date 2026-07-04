@@ -20,10 +20,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The in-language jail is macOS-native (Seatbelt); the Linux/Docker
-        # backend is DRAFT and not yet live-verified (see deponent/jail.py).
-        # CI runs on macOS, where the jail escape-proofs execute for real.
-        os: [macos-latest]
+        # Both OSes run the platform-independent core (gate/ledger/receipts/…);
+        # the macOS-native Seatbelt jail tests and the DRAFT Docker tests skip on
+        # Linux, while macOS runs the full suite incl. the live Seatbelt proofs.
+        os: [ubuntu-latest, macos-latest]
         python-version: ['3.10', '3.11', '3.12', '3.13']
     steps:
       - uses: actions/checkout@v4
