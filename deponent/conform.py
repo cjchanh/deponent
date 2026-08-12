@@ -4,17 +4,14 @@
 Run against the reference kernel:
     python3 -m deponent.conform --kernel deponent
 
-Run against sworncode (commit-time kernel):
-    PYTHONPATH=/path/to/sworn/src python3 -m deponent.conform --kernel sworn
-
 List the clauses any kernel must satisfy:
     python3 -m deponent.conform --list-clauses
 """
+
 from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 from .adapters import BUILTIN_ADAPTERS
@@ -30,13 +27,14 @@ def _list_clauses() -> int:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="GAK conformance harness CLI")
-    ap.add_argument("--kernel", default="deponent",
-                    choices=list(BUILTIN_ADAPTERS.keys()),
-                    help="kernel adapter to run conformance against")
-    ap.add_argument("--list-clauses", action="store_true",
-                    help="print all GAK clauses and exit")
-    ap.add_argument("--out", type=Path, default=None,
-                    help="write ConformanceReceipt JSON to this path")
+    ap.add_argument(
+        "--kernel",
+        default="deponent",
+        choices=list(BUILTIN_ADAPTERS.keys()),
+        help="kernel adapter to run conformance against",
+    )
+    ap.add_argument("--list-clauses", action="store_true", help="print all GAK clauses and exit")
+    ap.add_argument("--out", type=Path, default=None, help="write ConformanceReceipt JSON to this path")
     args = ap.parse_args(argv)
 
     if args.list_clauses:

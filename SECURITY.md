@@ -26,7 +26,7 @@ tamper that `verify()` misses — that is a real vulnerability and we want it.
 
 ## Reporting a vulnerability
 
-Email **cj@centennialsystems.com** with a description and, ideally, a reproducing
+Email **contact@centennialdefense.systems** with a description and, ideally, a reproducing
 test in the style of `tests/`. Please do not open a public issue for an unpatched
 escape or bypass.
 

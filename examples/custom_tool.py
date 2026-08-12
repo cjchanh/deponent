@@ -4,11 +4,16 @@
 This example shows how to subclass Gate + Cell so the same deny-by-default gate
 and tamper-evident ledger govern your own agent's tools — not just files and shell.
 """
+
 from __future__ import annotations
 
+import sys
 import tempfile
+from pathlib import Path
 
-from deponent import Cell, Gate, GateDecision
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # run without install
+
+from deponent import Cell, Gate, GateDecision  # noqa: E402
 
 
 class BrowserGate(Gate):
@@ -37,7 +42,10 @@ class BrowserCell(Cell):
 
 
 def main() -> int:
-    sandbox = tempfile.mkdtemp()
+    sandbox = Path(tempfile.mkdtemp())
+    blocked = sandbox / "blocked-example"
+    blocked.mkdir()
+    (blocked / "sentinel.txt").write_text("keep", encoding="utf-8")
     cell = BrowserCell(sandbox, gate=BrowserGate(sandbox), use_jail=False)
 
     # ALLOW: in-policy browse action.
@@ -50,7 +58,7 @@ def main() -> int:
     print(cell.act("exfiltrate", {"to": "evil.example"}).output)
 
     # BLOCK: destructive shell command still caught by inherited run_cmd policy.
-    print(cell.act("run_cmd", {"cmd": "rm -rf /"}).output)
+    print(cell.act("run_cmd", {"cmd": "rm -rf ./blocked-example"}).output)
 
     ok, msg = cell.verify()
     print(f"\ntestimony: {ok} — {msg}")

@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""GAK commit-gate adapter for sworncode (the commit-time sibling)."""
+"""Legacy optional commit-gate adapter.
+
+This module is retained only as source compatibility for existing local users. It
+is not a current built-in adapter and is excluded from distribution artifacts.
+"""
+
 from __future__ import annotations
 
 import json
@@ -11,7 +16,7 @@ from .contract import KernelAdapter
 
 
 class SwornAdapter(KernelAdapter):
-    """GAK adapter for sworncode — profile: commit-gate."""
+    """Legacy, non-built-in adapter for the optional commit-gate integration."""
 
     name = "sworncode"
     profile = "commit-gate"
@@ -23,6 +28,7 @@ class SwornAdapter(KernelAdapter):
 
     def _config(self, repo: Path):
         from sworn.config import load_config
+
         return load_config(repo)  # no .sworn/config.toml -> secure defaults
 
     def _gate(self, repo: Path, files: list[str]) -> "tuple[Any, Path]":
@@ -32,6 +38,7 @@ class SwornAdapter(KernelAdapter):
         and load_config runs exactly once per gated change-set.
         """
         from sworn.pipeline import run_pipeline
+
         cfg = self._config(repo)
         result = run_pipeline(repo, files, cfg)
         return result, repo / cfg.evidence_log_path
@@ -42,14 +49,16 @@ class SwornAdapter(KernelAdapter):
 
     def clean_chain_verifies(self) -> bool:
         from sworn.evidence.log import verify_chain
+
         _, log = self._gate(self._repo(), ["README.md"])  # a clean commit -> evidence written
         ok, _ = verify_chain(log)
         return ok
 
     def tamper_is_detected(self) -> bool:
         from sworn.evidence.log import verify_chain
+
         repo = self._repo()
-        self._gate(repo, ["README.md"])            # two recorded decisions -> a real chain link
+        self._gate(repo, ["README.md"])  # two recorded decisions -> a real chain link
         _, log = self._gate(repo, ["docs/x.md"])
         lines = log.read_text().splitlines()
         if len(lines) < 2:
@@ -63,13 +72,14 @@ class SwornAdapter(KernelAdapter):
         entry["decision"] = "TAMPERED" if entry.get("decision") != "TAMPERED" else "FORGED"
         lines[0] = json.dumps(entry, separators=(",", ":"), sort_keys=True, ensure_ascii=False)
         if lines[0] == before:
-            return False                           # forge was a no-op -> cannot claim tamper-evidence
+            return False  # forge was a no-op -> cannot claim tamper-evidence
         log.write_text("\n".join(lines) + "\n")
         ok, _ = verify_chain(log)
         return not ok
 
     def commit_testifies(self, files: list[str]) -> bool:
         from sworn.evidence.log import read_entries
+
         result, log = self._gate(self._repo(), files)  # a security surface -> BLOCKED
         entries = read_entries(log)
         if not entries:

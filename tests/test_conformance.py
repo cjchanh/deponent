@@ -4,19 +4,36 @@ receipt. The reference kernel (deponent) is conformant; a deny-everything kernel
 is NOT (deny-all is not governance); an out-of-profile or unclaimed-capability
 clause is NA, never a false FAIL; a check that raises is a FAIL, never a pass.
 Run: python3 -m pytest -q tests/test_conformance.py"""
-import unittest
 
+import os
+import re
+import subprocess
+import sys
+import unittest
+from pathlib import Path
+
+import deponent
 from deponent.conformance import (
-    CLAUSES,
     DeponentAdapter,
     run_conformance,
 )
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
 class _Fake:
     """A configurable candidate kernel for testing the harness itself."""
-    def __init__(self, *, profile="action-gate", supports=frozenset({"reconcile", "attest"}),
-                 allow_inbounds=True, deny_unknown=True, raises=False):
+
+    def __init__(
+        self,
+        *,
+        profile="action-gate",
+        supports=frozenset({"reconcile", "attest"}),
+        allow_inbounds=True,
+        deny_unknown=True,
+        raises=False,
+    ):
         self.name = "fake"
         self.profile = profile
         self.supports = supports
@@ -48,8 +65,8 @@ class _Fake:
 
 class _FakeCommit:
     """A configurable commit-gate candidate for testing the commit-gate clauses."""
-    def __init__(self, *, allow_clean=True, deny_security=True, testifies=True,
-                 supports=frozenset()):
+
+    def __init__(self, *, allow_clean=True, deny_security=True, testifies=True, supports=frozenset()):
         self.name = "fake-commit"
         self.profile = "commit-gate"
         self.supports = supports
@@ -116,8 +133,7 @@ class TestConformance(unittest.TestCase):
     def test_commit_gate_fake_is_conformant(self):
         r = run_conformance(_FakeCommit())
         self.assertTrue(r.conformant)
-        for cid in ("GAK-COMMIT-DENY-SECURITY", "GAK-COMMIT-ALLOW-CLEAN",
-                    "GAK-COMMIT-TESTIFIES"):
+        for cid in ("GAK-COMMIT-DENY-SECURITY", "GAK-COMMIT-ALLOW-CLEAN", "GAK-COMMIT-TESTIFIES"):
             c = next(x for x in r.results if x.id == cid)
             self.assertEqual(c.status, "PASS", cid)
 
@@ -127,22 +143,129 @@ class TestConformance(unittest.TestCase):
         c = next(x for x in r.results if x.id == "GAK-COMMIT-ALLOW-CLEAN")
         self.assertEqual(c.status, "FAIL")
 
-    def test_sworn_reference_is_conformant(self):
-        # Real sworncode commit-gate kernel, gated on sworncode being importable.
-        try:
-            import sworn  # noqa: F401
-        except ImportError:
-            self.skipTest("sworncode not on path")
-        from deponent.sworn_adapter import SwornAdapter
-        r = run_conformance(SwornAdapter())
-        self.assertTrue(r.conformant, r.render())
+    def test_deponent_is_the_only_current_builtin(self):
+        from deponent.adapters import BUILTIN_ADAPTERS
+
+        self.assertEqual(tuple(BUILTIN_ADAPTERS), ("deponent",))
 
     def test_receipt_serializes(self):
         r = run_conformance(DeponentAdapter())
         d = r.to_dict()
-        self.assertEqual(d["counts"]["pass"] + d["counts"]["fail"] + d["counts"]["na"],
-                         len(r.results))
+        self.assertEqual(d["counts"]["pass"] + d["counts"]["fail"] + d["counts"]["na"], len(r.results))
         self.assertIn("CONFORMANT", r.render())
+
+
+class TestPublicDistributionTruth(unittest.TestCase):
+    def test_public_executable_surfaces_have_no_root_or_home_target(self):
+        surfaces = (
+            "README.md",
+            "deponent/__init__.py",
+            "deponent/adapters/deponent.py",
+            "deponent/playground.py",
+            "examples/custom_tool.py",
+            "examples/demo.py",
+            "examples/governed_team.py",
+            "examples/minimal.py",
+            "examples/playground/rogue.json",
+            "docs/demo.cast",
+        )
+        forbidden = (
+            "rm -rf /",
+            "rm -rf ~",
+            "rm -rf $HOME",
+            "rm -rf ${HOME}",
+        )
+        findings = []
+        for relative in surfaces:
+            text = (REPO_ROOT / relative).read_text(encoding="utf-8", errors="replace")
+            for token in forbidden:
+                if token in text:
+                    findings.append(f"{relative}: {token}")
+        self.assertEqual(findings, [], "public root/home targets: " + "; ".join(findings))
+
+    def test_governed_team_never_recursively_deletes_an_override_path(self):
+        source = (REPO_ROOT / "examples/governed_team.py").read_text(encoding="utf-8")
+        self.assertNotIn("shutil.rmtree", source)
+        self.assertNotIn("DEPONENT_EXAMPLE_WORKDIR", source)
+        self.assertIn('tempfile.mkdtemp(prefix="deponent-team-")', source)
+
+    def test_generic_safety_example_replaces_retired_brand_promotion(self):
+        legacy_path = REPO_ROOT / "examples/safetyspine_action_governor.py"
+        example_path = REPO_ROOT / "examples/safety_action_governor.py"
+        self.assertFalse(legacy_path.exists(), "retired branded example remains public")
+        self.assertTrue(example_path.is_file(), "generic safety-governance example is missing")
+
+        forbidden = ("SafetySpine", "Governor Console")
+        findings = []
+        for relative in ("SPEC.md", "canaries/CANARIES.md", "examples/safety_action_governor.py"):
+            text = (REPO_ROOT / relative).read_text(encoding="utf-8", errors="replace")
+            for token in forbidden:
+                if token.casefold() in text.casefold():
+                    findings.append(f"{relative}: {token}")
+        self.assertEqual(findings, [], "retired product promotion: " + "; ".join(findings))
+
+        source = example_path.read_text(encoding="utf-8")
+        self.assertIn("class SafetyActionGate", source)
+        self.assertIn("class SafetyActionCell", source)
+        self.assertIn('agent="safety-action"', source)
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(REPO_ROOT)
+        completed = subprocess.run(
+            [sys.executable, str(example_path)],
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+            env=env,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("T-001: ALLOW", completed.stdout)
+        self.assertIn("T-002: BLOCK", completed.stdout)
+        self.assertIn("T-003: BLOCK", completed.stdout)
+        self.assertIn("T-004: BLOCK", completed.stdout)
+        self.assertIn("safety testimony: True", completed.stdout)
+
+    def test_public_copy_has_no_non_current_promotion_or_private_residue(self):
+        product_tokens = ("Archivist", "SafetySpine", "Governor Console", "Fleet Watch")
+        forbidden_by_surface = {
+            "README.md": product_tokens + ("centennialsystems.com",),
+            "pyproject.toml": ("private compliance", "private source", "centennialsystems.com"),
+            ".dockerignore": ("provenant", "private source"),
+            "deponent/adapters/__init__.py": ("provenant",),
+            "deponent/conform.py": product_tokens,
+            "docs/demo.cast": product_tokens,
+        }
+        findings = []
+        for relative, forbidden in forbidden_by_surface.items():
+            text = (REPO_ROOT / relative).read_text(encoding="utf-8", errors="replace")
+            for token in forbidden:
+                if token.casefold() in text.casefold():
+                    findings.append(f"{relative}: {token}")
+        self.assertEqual(findings, [], "stale public copy: " + "; ".join(findings))
+
+    def test_release_metadata_is_current_and_internally_consistent(self):
+        pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        version = re.search(r'^version = "([^"]+)"$', pyproject, re.MULTILINE)
+        self.assertIsNotNone(version)
+        self.assertEqual(version.group(1), "0.1.1")
+        self.assertEqual(deponent.__version__, version.group(1))
+        self.assertIn('requires-python = ">=3.10"', pyproject)
+        self.assertIn('license = "Apache-2.0"', pyproject)
+        self.assertIn("dependencies = []", pyproject)
+        self.assertIn('name = "Christopher \\"CJ\\" Chanhnourack"', pyproject)
+        self.assertIn('email = "contact@centennialdefense.systems"', pyproject)
+        for excluded in (
+            "AGENTS.md",
+            "deponent/adapters/sworn.py",
+            "deponent/sworn_adapter.py",
+        ):
+            self.assertIn(f'  "{excluded}",', pyproject)
+        for included in (
+            "SPEC.md",
+            "canaries/CANARIES.md",
+            "examples/safety_action_governor.py",
+        ):
+            self.assertNotIn(f'  "{included}",', pyproject)
 
 
 if __name__ == "__main__":

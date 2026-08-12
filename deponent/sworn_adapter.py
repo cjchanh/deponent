@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""sworn_adapter.py — GAK commit-gate adapter for sworncode (the commit-time sibling).
+"""Legacy command wrapper for the optional commit-gate adapter.
 
-Runs the GAK conformance harness's `commit-gate` profile against the REAL sworncode
-kernel. sworncode is lazy-imported INSIDE the methods so deponent's conformance core
-stays zero-dependency; importing this module never requires sworncode.
+This wrapper is retained only as source compatibility for existing local users. It
+is not a current built-in command and is excluded from distribution artifacts.
 
-sworncode is not pip-installed in every env. Run with it on the path:
+The optional integration is lazy-imported inside the adapter so Deponent's core
+stays zero-dependency. To use the legacy source wrapper with that dependency on the path:
     PYTHONPATH=/path/to/sworn/src python3 -m deponent.sworn_adapter
 
 Mapping: sworncode `run_pipeline(...).decision` (PASS/BLOCKED) -> harness ALLOW/BLOCK.
@@ -13,12 +13,11 @@ The universal chain-intact / tamper-evident clauses use sworncode's hash-chained
 evidence log (`verify_chain`). sworncode claims neither `reconcile` nor `attest`, so
 those clauses report NA (never a false FAIL).
 """
+
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
-from typing import Any
 
 from .adapters.sworn import SwornAdapter
 from .conformance import run_conformance

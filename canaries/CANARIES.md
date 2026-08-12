@@ -154,7 +154,9 @@ Deponent is a **reference governance primitive, not a hardened production sandbo
 - The gate's default policy is a **sane coding-agent sandbox, not a universal security policy.** It is overridable.
 - The ledger is **tamper-evident (sha256-chained), not cryptographically signed.** It proves consistency, not authorship. There is no key material in the project. Asymmetric signing is a stated non-goal.
 
-The productionized, certified safety kernel built on this idea (SafetySpine, Governor Console) is a separate, commercial surface. This — the gate, ledger, jail, receipts, cell, and these canaries — is the open core: the smallest version of the same idea, given away.
+This — the gate, ledger, jail, receipts, cell, and these canaries — is an open
+reference governance primitive. Its safety properties are limited to the claims
+and tests in this repository.
 
 It doesn't answer. It testifies.
 

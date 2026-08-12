@@ -328,11 +328,9 @@ Numbers about the example are about the example, not the kernel:
 ## Open-core boundary
 
 The reference kernel (`gate`/`ledger`/`jail`/`receipts`/`cell`/`examples`/canaries)
-is open, Apache-2.0. The productionized, certified, supported safety kernel
-(SafetySpine / Governor Console) stays commercial. Deponent is the smallest
-version of that same idea — deny-by-default, fail-closed, audited, bounded — given
-away as the primitive beneath the products, not as bait. Apache-2.0 is recommended
-because it matches North Mini Code's license and carries a patent grant.
+is open, Apache-2.0. Deponent is a small governance primitive: deny-by-default,
+fail-closed, audited, and bounded. Apache-2.0 is recommended because it matches
+North Mini Code's license and carries a patent grant.
 
 This is a reference governance primitive. The limits above are the contract, not
 fine print: it does not promise to be a hardened production sandbox, it does not

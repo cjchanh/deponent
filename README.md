@@ -4,7 +4,7 @@
 
 **A governed sovereign agent kernel. It doesn't answer. It testifies.**
 
-![deponent blocks rm -rf / and an unknown tool, then proves the audit log cannot be forged](docs/demo.gif)
+![Deponent blocks a destructive action and an unknown tool, then detects a forged audit record](docs/demo.gif)
 
 A local AI agent runs on your machine. It edits files, runs commands, touches your system — and when it finishes, all you have is its word that it behaved, and a failed step reports success as readily as a real one. Deponent replaces the word with a record you can verify yourself.
 
@@ -14,7 +14,7 @@ It is a small, model-agnostic governance layer that sits under any agent's tool 
 deny-by-default gate  ->  Seatbelt jail  ->  tamper-evident ledger  ->  verifiable receipt
 ```
 
-~3,300 lines of pure Python across 17 modules (+ a small `adapters/` subpackage), standard-library only — **zero third-party dependencies in the core.** Install: `pip install deponent`.
+The core is pure Python and standard-library only: **zero third-party runtime dependencies.** Install it with `pip install deponent`.
 
 ---
 
@@ -28,7 +28,7 @@ cell = Cell(tempfile.mkdtemp(), use_jail=False)   # a sovereign, local sandbox
                                                   # use_jail=True on macOS adds the Seatbelt jail
 print(cell.act("write_file", {"path": "notes.txt", "content": "hello"}).output)  # ALLOW
 print(cell.act("read_file",  {"path": "notes.txt"}).output)                      # ALLOW
-print(cell.act("run_cmd",    {"cmd": "rm -rf /"}).output)                        # BLOCK (destructive)
+print(cell.act("run_cmd",    {"cmd": "rm -rf ./blocked-example"}).output)        # BLOCK (destructive)
 print(cell.act("exfiltrate", {"to": "evil.example"}).output)                     # BLOCK (deny-by-default)
 
 ok, msg = cell.verify()                           # recompute the chain — don't trust it
@@ -116,27 +116,14 @@ State the limits, or the guarantees mean nothing.
 
 ## Proven
 
-**153 tests total** across 15 files. On this macOS host (Docker + optional extras present) `make test` gives **151 pass / 2 skip** — the 2 skips are optional-dependency paths (compliance-export backend; sworncode adapter), never failures. A plain macOS host without Docker skips the 6 Docker-backend tests too, and off-macOS the live Seatbelt jail tests skip — so the pass/skip split is honestly host-dependent. Run `make test` to see your host's number. Breakdown (collected):
+The suite exercises the gate, live macOS Seatbelt confinement, ledger integrity,
+receipts, reconciliation, claims, build profiles, the public playground, and the
+conformance harness. Platform- or optional-capability checks skip explicitly when
+their real backend is unavailable; they are never replaced with a passing mock.
 
-| module | tests | what it proves |
-|---|---:|---|
-| `gate.py` | 18 | deny-by-default; path-escape BLOCK; destructive/network/privilege BLOCK; chaining + command-substitution BLOCK; allowlist ALLOW |
-| `jail.py` | 14 | network denied, writes confined, resource caps enforced — **against the real macOS sandbox, live** |
-| `jail_backends.py` | 10 | backend dispatch + confinement contract (Seatbelt live; Docker when a daemon is present) |
-| `claims.py` | 15 | claim-mode: the run testifies what it can/cannot attest — ATTESTED inside coverage, ABSTAIN outside |
-| `reach.py` | 10 | graph-derived blast radius: reverse-dependency closure, not a substring guess |
-| `reconcile.py` | 8 | two-plane observed-vs-declared: an undeclared change is caught, not the agent's word |
-| `receipts.py` | 7 | recompute-not-trust verifier; corrupt write raises; tampered chain or metadata → `False` |
-| `conformance.py` | 10 | GAK conformance harness: scores any kernel pass/fail against the standard — across two profiles, action-gate **and** commit-gate |
-| `badge.py` | 12 | the earnable `GAK-conformant` mark: certify/verify, reproducible `clauses_digest`, red when not conformant (a badge that can't be faked) |
-| `playground.py` | 21 | the public playground: score any agent trace against the real kernel, per-clause pass/fail |
-| `profiles.py` | 6 | build-profile policy: reversible/local ALLOW, irreversible BLOCK (blast-radius-scoped) |
-| `operator_attest.py` | 6 | optional verification-only ed25519 overlay; emits a cell only on a passing verification |
-| `cell.py` | 6 | gate → jail → ledger wiring; one `.act()` = one testified action |
-| `selfgate.py` | 4 | the kernel governs its OWN build (`make self-gate-live`) and stays conformant + sound |
-| `ledger.py` | 6 | hash chain links; mutation/reorder breaks `verify()` with a location |
-
-The jail tests invoke the **real macOS sandbox (`sandbox-exec`) live — not mocked** — and skip automatically off-macOS. **It eats its own dog food:** `make self-gate-live` runs a real jailed git+rustc build through the gate, jail, and ledger (local commit ALLOWs, push BLOCKs at the irreversible boundary) and emits receipts for the run. And it's testable as a standard: `python3 -m deponent.conformance` scores the reference kernel pass/fail against the GAK clause set — across two governance shapes, action-gate kernels and commit-gate kernels (the latter via `sworn_adapter.py`, an optional adapter for the commit-time sibling sworncode; the core never imports it). Point it at your own kernel too.
+Run `python3 -m pytest -q` to get the current count and host-specific skip set.
+`make self-gate-live` drives a real local build through the same gate, jail, and
+ledger path and emits receipts for inspection.
 
 **The `GAK-conformant` mark.** Passing the harness is earnable infrastructure, not a self-claim. `python3 -m deponent.badge certify --kernel deponent` emits a self-contained badge (the SVG above), a markdown snippet, and a JSON receipt carrying a sha256 `clauses_digest` over the per-clause results — so the badge maps to a specific, reproducible outcome. Re-derive it yourself, fail-closed:
 
@@ -152,15 +139,12 @@ Any kernel that implements the small adapter and passes the clause set earns the
 
 ---
 
-## The governed agent team (example)
+## Governed agent team example
 
-`examples/governed_team.py` builds a real team on the kernel: **Architect → gated Builder → advisory Reviewer**, sharing one local model, model-agnostic via `examples/backends.py` (MLX or Ollama — add your own). Closure is never the Builder saying "done": it is an out-of-band pytest re-run, an intact hash chain, and a rogue action proven blocked live.
-
-The reference local model is **North Mini Code 1.0** (Cohere, 30B MoE / 3B active, Apache-2.0), which runs on Apple Silicon via `mlx-vlm`.
-
-> **Honest bench caveat — directional, not statistically significant (n ≈ 17).** North Mini scored 0.749 vs `qwen3-coder:30b` 0.686, winning 6 of 9 tasks. That is a signal, not a result. Do not cite it as a benchmark win.
-
-The point of the example is not the model — it is what governance does *to* a model. In my development sweeps (the sweep harness isn't in this repo yet — take these as reported, not reproducible-here), governance made a flaky local model **fail loud, never silently wrong**: no module, or it won't compile — never a buggy module quietly accepted. Decoupling the stochastic advisory Reviewer from the hard gate also lifted how often the pipeline certified cleanly, but the sample is small and the harness isn't here, so I'm leaving the precise numbers out rather than overstate them. What you *can* run today is in `tests/` and the demo: the team blocks a live rogue action and refuses to certify a broken chain. Governance turns a flaky local model into a worker that **fails visibly** — that is the claim, not a leaderboard.
+`examples/governed_team.py` shows an Architect, a gated Builder, and an advisory
+Reviewer sharing one ledger. The example is model-agnostic through
+`examples/backends.py`; use an Ollama or MLX backend, or add your own. Closure is
+an out-of-band test run plus an intact ledger—not the Builder saying “done.”
 
 ```bash
 # Ollama (any tool-capable coder)
@@ -180,7 +164,7 @@ DEPONENT_MLX_MODEL=mlx-community/North-Mini-Code-1.0-4bit \
 git clone <repo> deponent && cd deponent
 python3 -m pip install -e .        # or just run from the repo — the core needs no install
 
-make test                          # 153 tests (151 pass / 2 skip on this host; Docker/jail/attest/sworncode paths auto-skip, count is host-dependent)
+make test                          # current suite; real-backend skips are host-dependent
 make demo                          # the minimal testify demo, no model needed
 ```
 
@@ -198,24 +182,19 @@ The gate, ledger, and receipts are platform-independent; OS confinement is macOS
 
 ---
 
-## Where this sits
+## Stewardship
 
-Deponent is the **open-core primitive** beneath a small portfolio built on one thesis — *it doesn't answer, it testifies* — and one build principle: *auditable emergence from sovereign local primitives, at every scale.*
-
-- **Archivist** — local-first forensic document intelligence
-- **SafetySpine** — deterministic drone safety kernel
-- **Governor Console** — deny-by-default deployment gating
-- **Fleet Watch** — process-governance daemon with a hash-chained audit log
-
-Deponent is the smallest version of the same idea, given away. The kernel is open and complete on its own; the commercial safety-kernel siblings I'm building toward (SafetySpine, Governor Console) stay commercial — open-core, not a teaser.
-
-Built by CJ, founder of Centennial Defense Systems (Colorado Springs) — former U.S. Marine, solo. This is its public launch.
+Deponent is an open-source project from
+[Centennial Defense Systems](https://centennialdefense.systems), maintained by
+Christopher “CJ” Chanhnourack. The repository is the complete public reference
+kernel; its claims are limited to behavior you can reproduce from the source.
 
 ---
 
 ## Support
 
-Solo project — **security reports get answered** ([SECURITY.md](SECURITY.md)); everything else is best-effort, no SLA, no roadmap. PRs are welcome, but the kernel stays small and deny-by-default by design, so "welcome" isn't "merged."
+Report vulnerabilities through [SECURITY.md](SECURITY.md). General support and
+contributions are best-effort; no response-time SLA is offered.
 
 ---
 
@@ -223,10 +202,4 @@ Solo project — **security reports get answered** ([SECURITY.md](SECURITY.md));
 
 Apache-2.0 — including the patent grant.
 
-**Permissive forever.** Deponent is open-core under Apache-2.0, and the public kernel
-will stay that way. This is not a teaser license or a bait-and-switch: the kernel in
-this repository will not be relicensed to a restrictive license, moved behind a paid
-tier, or rug-pulled. The Apache-2.0 grant on every published version is irrevocable by
-its own terms, and that is deliberate — a sovereignty product you cannot keep is not
-sovereign. Commercial siblings (SafetySpine, Governor Console) stay commercial; that
-is the open-core line, and it does not move the kernel out from under you.
+The license applies to the public source and includes the Apache 2.0 patent grant.

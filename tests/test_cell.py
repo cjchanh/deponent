@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end proof for the Cell — the primitive working out of the box.
 Run: python -m pytest -q tests/test_cell.py"""
+
 import tempfile
 import unittest
 from pathlib import Path
@@ -30,6 +31,27 @@ class TestCell(unittest.TestCase):
         # a BLOCK is still recorded — the testimony includes what was refused
         self.assertEqual(len(self.cell.ledger.entries), 1)
 
+    def test_disposable_relative_target_is_blocked_unchanged_and_testified(self):
+        target = self.work / "blocked-example"
+        target.mkdir()
+        sentinel = target / "sentinel.bin"
+        expected = b"do-not-delete\x00\xff"
+        sentinel.write_bytes(expected)
+
+        r = self.cell.act(
+            "run_cmd",
+            {"cmd": "rm -rf ./blocked-example"},
+            agent="disposable-target-regression",
+        )
+
+        self.assertFalse(r.allowed)
+        self.assertEqual(r.entry["verdict"], "BLOCK")
+        self.assertEqual(r.entry["params"]["cmd"], "rm -rf ./blocked-example")
+        self.assertTrue(target.is_dir())
+        self.assertEqual(sentinel.read_bytes(), expected)
+        ok, message = self.cell.verify()
+        self.assertTrue(ok, message)
+
     def test_unknown_tool_denied_by_default(self):
         r = self.cell.act("exfiltrate", {"to": "evil.example"}, agent="t")
         self.assertFalse(r.allowed)
@@ -41,7 +63,7 @@ class TestCell(unittest.TestCase):
 
     def test_chain_verifies_after_mixed_actions(self):
         self.cell.act("write_file", {"path": "a.txt", "content": "1"})
-        self.cell.act("run_cmd", {"cmd": "rm -rf /"})           # blocked
+        self.cell.act("run_cmd", {"cmd": "rm -rf /"})  # blocked
         self.cell.act("read_file", {"path": "a.txt"})
         ok, msg = self.cell.verify()
         self.assertTrue(ok, msg)
