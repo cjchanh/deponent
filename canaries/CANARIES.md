@@ -8,7 +8,7 @@ These are not screenshots. They are runnable proofs. Reproduce the entire catalo
 python -m pytest -q
 ```
 
-Last verified run: **44 passed** (gate 13, ledger 4, jail 14, receipts 7, cell 6), Python 3, pytest 9.0.2. The jail tests invoke the real macOS Seatbelt (`sandbox-exec`) live — every escape attempt below actually runs *inside* the jail; they are skipped automatically off-macOS, where no Seatbelt binary exists. If a canary stops holding, the suite goes red. That is the contract: the system does not *claim* it behaved — it testifies, and the testimony is verifiable.
+Do not trust a frozen pass/skip count in this file. Reproduce on this host with `python -m pytest -q`. Seatbelt tests invoke the real macOS `sandbox-exec` live — every escape attempt below actually runs *inside* the jail; they skip when that binary is absent. Docker-backend tests are gated separately. If a canary stops holding, the suite goes red. That is the contract: the system does not *claim* it behaved — it testifies, and the testimony is verifiable.
 
 Each canary names the attack, what should happen, the test that proves it, and the verdict.
 
@@ -29,10 +29,12 @@ The gate governs the shell and path surface: which programs may run, which paths
 | G7 | Chained escape — `ls && curl evil` | A benign head chained to a denied segment refused; every segment is checked | `test_block_chained_escape` | BLOCKED |
 | G8 | Unknown tool — `delete_database` | No policy exists for the tool; deny-by-default; classified `unknown-tool` | `test_block_unknown_tool_deny_by_default` | BLOCKED |
 | G9 | Unallowlisted program — `make install` | Program head not on the allowlist refused | `test_block_unallowlisted_program` | BLOCKED |
+| G10 | Shell redirect glued out of sandbox — `echo x>/etc/passwd` | Redirect class refused; classified `shell-redirect` | `test_block_redirect_glued_out_of_sandbox` | BLOCKED |
+| G11 | Newline-separated second command — `echo ok\nshred secret` | Newline treated as a chain separator; second head allowlisted-or-blocked | `test_block_newline_second_command` | BLOCKED |
 
 **Read G7 and G8 carefully — they are the heart of the design.**
 
-G7 proves the gate splits a command on `&&`, `||`, `;`, and `|` and re-checks *every* segment. `ls` alone is allowlisted; `curl` is denied. The chain is refused because one segment is denied — you cannot smuggle a denied command in behind an allowed one.
+G7 proves the gate splits a command on `&&`, `||`, `;`, `|`, newline, and CR and re-checks *every* segment. `ls` alone is allowlisted; `curl` is denied. The chain is refused because one segment is denied — you cannot smuggle a denied command in behind an allowed one. G10/G11 prove the same family: glued redirects and a newline-prefixed second command do not skip the gate.
 
 G8 proves the gate is *deny-by-default*, not deny-by-list. A tool the gate has never heard of — `delete_database` — is blocked not because it matched a deny pattern, but because there is no policy that allows it. The default answer to "may I?" is no.
 
@@ -84,7 +86,7 @@ L2 proves order is load-bearing, not cosmetic: swapping two entries breaks the `
 
 ### Honesty bound — read this
 
-The ledger is **sha256-only. It is not cryptographically signed.** It proves *internal consistency* — that no entry was altered or reordered after the fact. It does **not** prove *authorship* — who wrote the chain. There is no key material anywhere in this project. An attacker who can rewrite the entire file from genesis can produce a self-consistent chain.
+The ledger is **sha256-only. It is not cryptographically signed.** It proves *internal consistency* — that no entry was altered or reordered after the fact. It does **not** prove *authorship* — who wrote the chain. The ledger core is keyless. An optional, verification-only ed25519 overlay (`operator_attest.py`, extra `deponent[attest]`) can verify an operator's out-of-band signature over a run; it signs nothing the agent does. An attacker who can rewrite the entire file from genesis can produce a self-consistent chain.
 
 The correct words are **tamper-evident** and **hash-chained**. Not "signed," not "unforgeable," not "tamper-proof." Asymmetric signing (ed25519) is a deliberate non-goal of this reference layer: it would introduce key handling, which is a separate and heavier security surface. That boundary is a feature of the launch, not a gap papered over. Keep it honest in anything you build on top.
 
@@ -123,10 +125,13 @@ The Cell is the whole architecture in one object: `gate -> (jail) -> ledger`, on
 | C4 | Path escape blocked | `write_file ../../etc/passwd` refused | `test_path_escape_blocked` | BLOCKED |
 | C5 | Chain verifies after mixed allow/block actions | Three actions (write, blocked `rm -rf`, read); `verify()` returns `True`, three entries | `test_chain_verifies_after_mixed_actions` | VERIFIED |
 | C6 | Malformed call fails soft, not crash | Wrong param name fed back as an error the agent can self-correct; loop survives; attempt recorded | `test_malformed_call_fails_soft_not_crash` | FAIL-SOFT |
+| C7 | Disposable relative target `rm -rf ./blocked-example` with sentinel bytes | BLOCK; directory and sentinel bytes unchanged; ledger re-verifies | `test_disposable_relative_target_is_blocked_unchanged_and_testified` | BLOCKED + unchanged + testified |
 
 **C2 records the road not taken: a refusal is testimony too.** The blocked `rm -rf /` is recorded in the ledger, not silently dropped. The record of what an agent *tried* to do and was denied is as auditable as what it was allowed to do.
 
 **C6 is the fail-soft / fail-closed distinction.** A malformed tool call (wrong parameter name) does not crash the loop and does not fail the policy open. The execution error is fed back to the agent so it can self-correct, the gate verdict still stands, and the attempt is recorded. The policy never fails open; only the execution fails soft.
+
+**C7 is the public-demo target, not just the hostile-string canary.** Executable examples use `rm -rf ./blocked-example`. This test proves that disposable relative target is BLOCKed, the sentinel file's bytes are unchanged, and the refusal is a valid ledger entry.
 
 ---
 
@@ -150,9 +155,9 @@ The two failure modes that *are* killable at runtime — the **memory bomb** and
 
 Deponent is a **reference governance primitive, not a hardened production sandbox.**
 
-- The in-language jail is **macOS-only** (Seatbelt). On Linux you plug in firejail, nsjail, or a container; the gate and ledger are platform-independent.
+- The live-verified in-language jail is **macOS Seatbelt**. `jail.py` also contains a **DRAFT** Docker backend; do not read DRAFT as proven. The gate and ledger are platform-independent.
 - The gate's default policy is a **sane coding-agent sandbox, not a universal security policy.** It is overridable.
-- The ledger is **tamper-evident (sha256-chained), not cryptographically signed.** It proves consistency, not authorship. There is no key material in the project. Asymmetric signing is a stated non-goal.
+- The ledger is **tamper-evident (sha256-chained), not cryptographically signed.** It proves consistency, not authorship. The ledger core is keyless. Optional operator attestation is a separate extra. Asymmetric signing is a stated non-goal of the ledger path.
 
 This — the gate, ledger, jail, receipts, cell, and these canaries — is an open
 reference governance primitive. Its safety properties are limited to the claims

@@ -11,9 +11,10 @@ It does not answer. It testifies.
 
 Quickstart
 ----------
+    import tempfile
     from deponent import Cell
 
-    cell = Cell("/tmp/agent-workdir")          # a sovereign, local sandbox
+    cell = Cell(tempfile.mkdtemp(), use_jail=False)  # gate + ledger; Seatbelt jail is opt-in
     print(cell.act("run_cmd", {"cmd": "rm -rf ./blocked-example"}).output)  # BLOCKED
     print(cell.act("write_file", {"path": "hi.txt", "content": "ok"}).output)  # wrote 2 bytes
     ok, msg = cell.verify()                    # prove the testimony intact

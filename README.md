@@ -106,7 +106,7 @@ The Cell is the keystone, and it composes at every scale: one tool call, one age
 This section is the trust anchor. Read it before you build on this.
 
 - **It is a reference governance primitive, not a hardened production sandbox.** It is the smallest honest version of the idea — clear enough to read end-to-end, strong enough to be useful, not a certified security product.
-- **The in-language jail is macOS-only.** Seatbelt is the native primitive. On Linux you plug in firejail, nsjail, or a container. The gate and ledger are platform-independent; only the jail is swapped.
+- **The live-verified in-language jail is macOS Seatbelt.** `jail.py` also contains a **DRAFT** Docker backend; do not read DRAFT as proven. On other hosts you supply confinement or opt into gate-only (`use_jail=False`). The gate and ledger are platform-independent.
 - **It is tamper-EVIDENT, not tamper-PROOF.** The ledger core is a **keyless sha256 hash chain** — nothing in the agent's execution path is signed. It proves *internal consistency* — that no entry was altered or reordered — **not authorship.** An attacker who can rewrite the entire file from genesis can produce a consistent chain. The core ledger is **not cryptographic signatures.** There is an **optional, verification-only ed25519 operator-attestation overlay** (`operator_attest.py`, opt-in via `deponent[attest]`) that verifies an operator's out-of-band signature over a run; it signs nothing the agent does. The core stays keyless on purpose — asymmetric signing in the execution path is a deliberate non-goal.
 - **The default gate policy is a sane coding-agent sandbox, not a universal security policy.** It is overridable per instance (`deny=`, `allow_heads=`). Tune it for your tool surface.
 
@@ -178,7 +178,7 @@ docker run --rm deponent             # scores the kernel against its own GAK sta
 docker run --rm deponent make test   # run the suite in-container
 ```
 
-The gate, ledger, and receipts are platform-independent; OS confinement is macOS Seatbelt on the host or the Docker backend elsewhere (escape-proofs live-verified, `tests/test_jail_backends.py`).
+The gate, ledger, and receipts are platform-independent. Live-verified OS confinement is macOS Seatbelt. The Docker backend in `jail.py` is **DRAFT**; `tests/test_jail_backends.py` gates those tests. Do not read DRAFT as proven.
 
 ---
 

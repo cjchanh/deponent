@@ -4,11 +4,10 @@ conformance.py — the GAK conformance harness: turn "governed agent kernel" fro
 slogan into a checkable receipt.
 
 A category is real when a third party can test against it and get a verdict. This
-runs a fixed set of GAK clauses — the seven-primitive thesis reduced to executable
-checks — against a CANDIDATE kernel and emits a ConformanceReceipt (per-clause
-PASS/FAIL/NA + an overall verdict). Point it at deponent (the reference) or at any
-kernel that implements the small adapter below; the clauses don't care whose kernel
-it is.
+runs a fixed set of GAK clauses — executable checks, not a slogan — against a
+CANDIDATE kernel and emits a ConformanceReceipt (per-clause PASS/FAIL/NA + an
+overall verdict). Point it at deponent (the reference) or at any kernel that
+implements the small adapter below; the clauses don't care whose kernel it is.
 
 PROFILES (so a different governance SHAPE doesn't false-FAIL).
   Kernels govern at different moments. deponent is an ACTION-gate (it evaluates a
@@ -94,8 +93,8 @@ class ConformanceReceipt:
         return "\n".join(lines)
 
 
-# The clauses — the seven-primitive thesis as executable checks. Each `check` returns
-# True iff the candidate exhibits the required behavior.
+# The clauses — GAK as executable checks. Each `check` returns True iff the
+# candidate exhibits the required behavior. Count them from CLAUSES, not a slogan.
 CLAUSES: tuple[Clause, ...] = (
     Clause(
         "GAK-DENY-DEFAULT",

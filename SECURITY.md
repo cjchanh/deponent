@@ -17,8 +17,11 @@ explicit non-goals. In particular:
   a container). The gate and the ledger are platform-independent.
 - The ledger is **tamper-evident** (sha256 hash chain), **not** cryptographically
   signed. It proves a record was not altered or reordered; it does **not** prove
-  authorship. There is no key material in this project. Do not rely on it for
-  attribution against an attacker who can rewrite the whole log from genesis.
+  authorship. The core execution path is keyless. An optional, verification-only
+  ed25519 operator-attestation overlay (`operator_attest.py`, extra `deponent[attest]`)
+  can verify an operator's out-of-band signature over a run; it signs nothing the
+  agent does. Do not rely on the hash chain for attribution against an attacker
+  who can rewrite the whole log from genesis.
 
 These are deliberate boundaries, not undiscovered gaps. If you find a way the gate
 or jail fails *within its stated scope* — a sandbox escape, a deny-bypass, a

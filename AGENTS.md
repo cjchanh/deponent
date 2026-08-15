@@ -31,6 +31,21 @@ Source identity and scope are frozen in the ES-06 cross-reference:
   `deponent/operator_attest.py` without a new independently verified security
   finding and fresh `OPERATOR COMMIT:` authority.
 
+## Present tree (facts, not a score)
+
+This checkout currently:
+
+- Registers only `"deponent"` in `BUILTIN_ADAPTERS`.
+- Keeps `deponent/adapters/sworn.py` and `deponent/sworn_adapter.py` in source as
+  hatch-excluded legacy wrappers, labeled not-current built-in.
+- Uses disposable relative `rm -rf ./blocked-example` targets on public executable
+  demos.
+- Proves that disposable target with `use_jail=False`: BLOCK, unchanged sentinel
+  bytes, valid refusal ledger entry
+  (`tests/test_cell.py::test_disposable_relative_target_is_blocked_unchanged_and_testified`).
+
+These are observations about this tree. They are not a completion mark.
+
 ## Required method
 
 - Use red-green TDD: capture a failing regression before production edits.

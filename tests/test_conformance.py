@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GAK conformance harness — turn the seven-primitive thesis into a checkable
+"""GAK conformance harness — turn the GAK clause set into a checkable
 receipt. The reference kernel (deponent) is conformant; a deny-everything kernel
 is NOT (deny-all is not governance); an out-of-profile or unclaimed-capability
 clause is NA, never a false FAIL; a check that raises is a FAIL, never a pass.
@@ -266,6 +266,71 @@ class TestPublicDistributionTruth(unittest.TestCase):
             "examples/safety_action_governor.py",
         ):
             self.assertNotIn(f'  "{included}",', pyproject)
+
+    def test_spec_matches_released_version_and_public_api(self):
+        spec = (REPO_ROOT / "SPEC.md").read_text(encoding="utf-8")
+        self.assertIn("`0.1.1`", spec)
+        self.assertNotIn("Version `0.1.0`", spec)
+        self.assertNotIn("44 tests pass", spec)
+        api_section = spec.split("**Public API**", 1)[1].split("**Stability", 1)[0]
+        for name in deponent.__all__:
+            self.assertIn(f"`{name}`", api_section, name)
+
+    def test_conformance_docs_do_not_undercount_clauses_as_seven(self):
+        from deponent.conformance import CLAUSES
+
+        src = (REPO_ROOT / "deponent/conformance.py").read_text(encoding="utf-8")
+        if len(CLAUSES) != 7:
+            self.assertNotIn("seven-primitive", src)
+
+    def test_public_docs_do_not_claim_the_whole_tree_has_no_key_material(self):
+        self.assertTrue((REPO_ROOT / "deponent/operator_attest.py").is_file())
+        phrases = (
+            "no key material anywhere in the project",
+            "there is no key material in this project",
+            "there is no key material in the project",
+        )
+        for relative in ("SPEC.md", "SECURITY.md", "canaries/CANARIES.md"):
+            text = (REPO_ROOT / relative).read_text(encoding="utf-8").casefold()
+            for phrase in phrases:
+                self.assertNotIn(phrase, text, relative)
+
+    def test_public_docs_do_not_advertise_sworn_as_current(self):
+        from deponent.adapters import BUILTIN_ADAPTERS
+        from deponent.adapters.sworn import SwornAdapter
+
+        self.assertEqual(tuple(BUILTIN_ADAPTERS), ("deponent",))
+        self.assertNotIn(SwornAdapter, BUILTIN_ADAPTERS.values())
+        for relative in ("README.md", "SECURITY.md", "canaries/CANARIES.md"):
+            text = (REPO_ROOT / relative).read_text(encoding="utf-8")
+            self.assertNotIn("sworn", text.casefold(), relative)
+        spec = (REPO_ROOT / "SPEC.md").read_text(encoding="utf-8")
+        if "sworn" in spec.casefold():
+            self.assertIn("not a current built-in", spec.casefold())
+        sworn = (REPO_ROOT / "deponent/adapters/sworn.py").read_text(encoding="utf-8")
+        wrapper = (REPO_ROOT / "deponent/sworn_adapter.py").read_text(encoding="utf-8")
+        self.assertIn("legacy", sworn.casefold())
+        self.assertIn("not a current built-in", sworn.casefold())
+        self.assertIn("legacy", wrapper.casefold())
+        self.assertIn("not a current built-in", wrapper.casefold())
+
+    def test_package_docstring_matches_gate_only_disposable_quickstart(self):
+        src = (REPO_ROOT / "deponent/__init__.py").read_text(encoding="utf-8")
+        self.assertIn("tempfile", src)
+        self.assertIn("use_jail=False", src)
+        self.assertNotIn('Cell("/tmp/agent-workdir")', src)
+
+    def test_readme_does_not_claim_draft_docker_jail_is_live_verified(self):
+        text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertNotIn("Docker backend elsewhere (escape-proofs live-verified", text)
+        self.assertIn("DRAFT", text)
+
+    def test_canaries_document_the_disposable_relative_target_cell_proof(self):
+        text = (REPO_ROOT / "canaries/CANARIES.md").read_text(encoding="utf-8")
+        self.assertNotIn("44 passed", text)
+        self.assertIn("test_disposable_relative_target_is_blocked_unchanged_and_testified", text)
+        self.assertIn("test_block_redirect_glued_out_of_sandbox", text)
+        self.assertIn("test_block_newline_second_command", text)
 
 
 if __name__ == "__main__":
