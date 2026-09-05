@@ -77,8 +77,10 @@ _INTERPRETER_HEAD_RE = re.compile(r"^(python|pypy)\d*(\.\d+)?$")
 
 def is_interpreter_head(head: str) -> bool:
     """True for heads that execute caller-supplied code (versioned interpreters such
-    as `python3.12` included). Used only in gate-only mode."""
-    return head in INTERPRETER_HEADS or bool(_INTERPRETER_HEAD_RE.match(head))
+    as `python3.12` and path-qualified forms such as `/usr/bin/python3` included).
+    Used only in gate-only mode."""
+    base = os.path.basename(head or "")
+    return base in INTERPRETER_HEADS or bool(_INTERPRETER_HEAD_RE.match(base))
 # Segment operators after shlex tokenization (quoted copies stay inside words).
 _OPERATORS = frozenset({";", "&&", "||", "|"})
 _SUBST = ("$(", "`", "${")

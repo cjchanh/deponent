@@ -117,8 +117,14 @@ class TestGateOnlyContainment(unittest.TestCase):
         with patch("deponent.cell.subprocess.run", side_effect=AssertionError("must not execute")):
             chain = cell.act("run_cmd", {"cmd": "echo a && echo b"})
             interp = cell.act("run_cmd", {"cmd": "python3 -c pass"})
+            pathed = cell.act("run_cmd", {"cmd": "/usr/bin/python3 -c pass"})
+            relative = cell.act("run_cmd", {"cmd": "./venv/bin/python3.12 -c pass"})
+            shell = cell.act("run_cmd", {"cmd": "/bin/bash -c id"})
+            launcher = cell.act("run_cmd", {"cmd": "/usr/bin/env python3 -c pass"})
             bad = cell.act("run_cmd", {"cmd": "echo 'unterminated"})
         for r, cls in ((chain, "chain-unjailed"), (interp, "interpreter-unjailed"),
+                       (pathed, "interpreter-unjailed"), (relative, "interpreter-unjailed"),
+                       (shell, "interpreter-unjailed"), (launcher, "interpreter-unjailed"),
                        (bad, "unparsable-command")):
             self.assertEqual(r.decision.verdict, "BLOCK")
             self.assertEqual(r.decision.blast_class, cls)
@@ -126,6 +132,26 @@ class TestGateOnlyContainment(unittest.TestCase):
             self.assertTrue(r.output.startswith("BLOCKED ["))
         ok, msg = cell.verify()
         self.assertTrue(ok, msg)
+
+    def test_tightening_does_not_mutate_the_callers_gate(self):
+        shared = Gate(self.work)
+        Cell(self.work, ledger_path=self.work / "l.jsonl", use_jail=False, gate=shared)
+        self.assertFalse(shared.unjailed)  # a jailed Cell sharing it keeps jail policy
+        d = shared.evaluate("run_cmd", {"cmd": "echo a && echo b"})
+        self.assertEqual(d.verdict, "ALLOW")
+
+    def test_interpreter_opt_in_is_the_tighter_of_cell_and_gate(self):
+        permissive = Gate(self.work, unjailed=True, allow_unjailed_interpreters=True)
+        cell = Cell(self.work, ledger_path=self.work / "l.jsonl", use_jail=False, gate=permissive)
+        self.assertFalse(cell.allow_unjailed_interpreters)
+        with patch("deponent.cell.subprocess.run", side_effect=AssertionError("must not execute")):
+            r = cell.act("run_cmd", {"cmd": "python3 -c pass"})
+        self.assertEqual((r.decision.verdict, r.decision.blast_class), ("BLOCK", "interpreter-unjailed"))
+        strict_gate = Gate(self.work, unjailed=True, allow_unjailed_interpreters=False)
+        cell2 = Cell(self.work, ledger_path=self.work / "l2.jsonl", use_jail=False,
+                     gate=strict_gate, allow_unjailed_interpreters=True)
+        r2 = cell2.act("run_cmd", {"cmd": "python3 -c pass"})
+        self.assertEqual(r2.decision.verdict, "BLOCK")  # gate refused it first
 
     def test_build_cell_gate_only_refuses_interpreters(self):
         from deponent.profiles import build_cell

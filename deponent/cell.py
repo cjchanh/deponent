@@ -24,6 +24,7 @@ gate + ledger + jail wrapping is inherited unchanged.
 """
 from __future__ import annotations
 
+import copy
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -75,7 +76,9 @@ class Cell:
             )
         elif not use_jail and not getattr(gate, "unjailed", False):
             # A caller-supplied gate built for jail mode would ALLOW interpreters and
-            # chains that gate-only mode cannot contain. Tighten it; never loosen.
+            # chains that gate-only mode cannot contain. Tighten a Cell-owned copy;
+            # never loosen, and never mutate an object another (jailed) Cell may share.
+            gate = copy.copy(gate)
             gate.unjailed = True
         self.gate = gate
         self.ledger = Ledger(ledger_path)
@@ -148,11 +151,21 @@ class Cell:
         if len(segments) != 1:
             return GateDecision("BLOCK", "chain-unjailed",
                                 f"gate-only mode runs exactly one command segment; got {len(segments)}")
-        head = segments[0][0] if segments[0] else ""
-        if is_interpreter_head(head) and not getattr(self.gate, "allow_unjailed_interpreters", False):
+        if not segments[0]:
+            return GateDecision("BLOCK", "unparsable-command",
+                                "gate-only mode refused an empty command segment")
+        head = segments[0][0]
+        if is_interpreter_head(head) and not self._interpreters_opted_in():
             return GateDecision("BLOCK", "interpreter-unjailed",
                                 f"interpreter {head!r} refused in gate-only mode")
         return None
+
+    def _interpreters_opted_in(self) -> bool:
+        """Gate-only interpreters run only when BOTH the Cell and its gate opted in:
+        the tighter of the two policies wins, so a permissive foreign gate cannot
+        loosen a Cell that did not ask for interpreters (and vice versa)."""
+        return bool(self.allow_unjailed_interpreters) and bool(
+            getattr(self.gate, "allow_unjailed_interpreters", False))
 
     def _disclosure(self) -> dict:
         return {
@@ -220,7 +233,9 @@ class Cell:
             return ("ERROR: gate-only mode runs exactly one command segment; "
                     f"got {len(segments)} — refusing (fail-closed).")
         argv = segments[0]
-        if argv and is_interpreter_head(argv[0]) and not getattr(self.gate, "allow_unjailed_interpreters", False):
+        if not argv:
+            return "ERROR: gate-only mode refused an empty command segment."
+        if is_interpreter_head(argv[0]) and not self._interpreters_opted_in():
             return f"ERROR: interpreter {argv[0]!r} refused in gate-only mode."
         r = subprocess.run(argv, shell=False, cwd=str(self.sandbox), env=env,
                            capture_output=True, text=True, timeout=self.wall_s)
