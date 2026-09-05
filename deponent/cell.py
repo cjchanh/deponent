@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .claims import ClaimSet, attest
-from .gate import Gate, GateDecision, tokenize_command
+from .gate import Gate, GateDecision, tokenize_command, is_interpreter_head
 from .jail import jail_available, run_jailed
 from .ledger import Ledger
 
@@ -67,11 +67,17 @@ class Cell:
                  allow_unjailed_interpreters: bool = False):
         self.sandbox = Path(sandbox).resolve()
         self.sandbox.mkdir(parents=True, exist_ok=True)
-        self.gate = gate or Gate(
-            self.sandbox,
-            unjailed=not use_jail,
-            allow_unjailed_interpreters=allow_unjailed_interpreters,
-        )
+        if gate is None:
+            gate = Gate(
+                self.sandbox,
+                unjailed=not use_jail,
+                allow_unjailed_interpreters=allow_unjailed_interpreters,
+            )
+        elif not use_jail and not getattr(gate, "unjailed", False):
+            # A caller-supplied gate built for jail mode would ALLOW interpreters and
+            # chains that gate-only mode cannot contain. Tighten it; never loosen.
+            gate.unjailed = True
+        self.gate = gate
         self.ledger = Ledger(ledger_path)
         self.use_jail = use_jail
         self.allow_unjailed_interpreters = allow_unjailed_interpreters
@@ -90,6 +96,12 @@ class Cell:
     def act(self, tool: str, params: dict, *, agent: str = "agent") -> ActResult:
         """Gate -> execute (if allowed) -> record. One call, one testified action."""
         decision = self.gate.evaluate(tool, params)
+        if decision.verdict != "BLOCK":
+            # Gate-only mode re-checks containment on the execute path so that a
+            # permissive or foreign gate's ALLOW is still recorded as the BLOCK it is.
+            guard = self._gate_only_guard(tool, params)
+            if guard is not None:
+                decision = guard
         if decision.verdict == "BLOCK":
             entry = self.ledger.record(agent=agent, tool=tool, params=params,
                                        decision=decision, outcome="",
@@ -120,6 +132,27 @@ class Cell:
         result = ActResult(decision, output, entry, rr)
         self.transcript.append(result)
         return result
+
+    def _gate_only_guard(self, tool: str, params: dict) -> GateDecision | None:
+        """Containment check for gate-only execution: exactly one parsable segment,
+        no interpreter unless the gate opted in. Returns a BLOCK decision to record,
+        or None when the command may run. Jail mode returns None (policy unchanged)."""
+        if self.use_jail or tool != "run_cmd":
+            return None
+        cmd = params.get("cmd", "") if isinstance(params, dict) else ""
+        try:
+            segments = tokenize_command(cmd)
+        except ValueError as e:
+            return GateDecision("BLOCK", "unparsable-command",
+                                f"gate-only mode refused an unparsable command: {e}")
+        if len(segments) != 1:
+            return GateDecision("BLOCK", "chain-unjailed",
+                                f"gate-only mode runs exactly one command segment; got {len(segments)}")
+        head = segments[0][0] if segments[0] else ""
+        if is_interpreter_head(head) and not getattr(self.gate, "allow_unjailed_interpreters", False):
+            return GateDecision("BLOCK", "interpreter-unjailed",
+                                f"interpreter {head!r} refused in gate-only mode")
+        return None
 
     def _disclosure(self) -> dict:
         return {
@@ -174,10 +207,11 @@ class Cell:
             r = run_jailed(cmd, self.sandbox, env=env,
                            mem_cap_mb=self.mem_cap_mb, wall_s=self.wall_s)
             return f"exit={r['returncode']}\n{r['output']}"
-        # Gate-only mode: no OS confinement. Run the single argv the gate tokenized,
-        # without a shell. Interpreters require allow_unjailed_interpreters=True.
-        # Fail-closed against a caller-supplied gate that was not built unjailed:
-        # never run more (or less) than the one segment the policy allows.
+        # Gate-only mode: no OS confinement. act() has already recorded a BLOCK for
+        # chains, unparsable input and interpreters via _gate_only_guard; this path
+        # runs the single argv the gate tokenized, without a shell. Re-derived with the
+        # same tokenizer (one function) and re-checked in case _execute is called
+        # directly by a subclass.
         try:
             segments = tokenize_command(cmd)
         except ValueError:
@@ -186,6 +220,8 @@ class Cell:
             return ("ERROR: gate-only mode runs exactly one command segment; "
                     f"got {len(segments)} — refusing (fail-closed).")
         argv = segments[0]
+        if argv and is_interpreter_head(argv[0]) and not getattr(self.gate, "allow_unjailed_interpreters", False):
+            return f"ERROR: interpreter {argv[0]!r} refused in gate-only mode."
         r = subprocess.run(argv, shell=False, cwd=str(self.sandbox), env=env,
                            capture_output=True, text=True, timeout=self.wall_s)
         return f"exit={r.returncode}\n{(r.stdout + r.stderr)[-2800:]}"

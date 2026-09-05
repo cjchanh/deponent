@@ -65,8 +65,20 @@ ALLOW_HEADS = frozenset({
     "ls", "cat", "head", "tail", "pwd", "echo", "grep", "wc",
     "mkdir", "touch", "diff", "true", "sort", "uniq",
 })
-# Interpreter heads refused in gate-only (unjailed) mode unless explicitly opted in.
-INTERPRETER_HEADS = frozenset({"python", "python3", "pytest"})
+# Interpreter / launcher heads refused in gate-only (unjailed) mode unless explicitly
+# opted in. This is a denylist over heads an integrator might allow-list; a head not in
+# ALLOW_HEADS is already refused as program-not-allowlisted before this check runs.
+INTERPRETER_HEADS = frozenset({
+    "python", "python3", "pytest", "pypy", "pypy3", "uv", "uvx", "pip", "pip3",
+    "node", "perl", "ruby", "bash", "sh", "zsh", "dash", "env", "xargs",
+})
+_INTERPRETER_HEAD_RE = re.compile(r"^(python|pypy)\d*(\.\d+)?$")
+
+
+def is_interpreter_head(head: str) -> bool:
+    """True for heads that execute caller-supplied code (versioned interpreters such
+    as `python3.12` included). Used only in gate-only mode."""
+    return head in INTERPRETER_HEADS or bool(_INTERPRETER_HEAD_RE.match(head))
 # Segment operators after shlex tokenization (quoted copies stay inside words).
 _OPERATORS = frozenset({";", "&&", "||", "|"})
 _SUBST = ("$(", "`", "${")
@@ -199,7 +211,7 @@ class Gate:
             if not self.allow_unjailed_interpreters:
                 for toks in segments:
                     head = os.path.basename(toks[0])
-                    if head in INTERPRETER_HEADS:
+                    if is_interpreter_head(head):
                         return GateDecision(
                             "BLOCK", "interpreter-unjailed",
                             f"interpreter {head!r} refused in gate-only mode",
@@ -235,4 +247,4 @@ class Gate:
 
 
 __all__ = ["Gate", "GateDecision", "DENY_SUBSTR", "ALLOW_HEADS",
-           "INTERPRETER_HEADS", "tokenize_command"]
+           "INTERPRETER_HEADS", "is_interpreter_head", "tokenize_command"]

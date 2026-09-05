@@ -53,12 +53,14 @@ BUILD_DENY_EXTRA = (
 BUILD_DENY_SUBSTR = DENY_SUBSTR + BUILD_DENY_EXTRA
 
 
-def build_gate(repo_root: os.PathLike | str) -> Gate:
+def build_gate(repo_root: os.PathLike | str, *, unjailed: bool = False,
+               allow_unjailed_interpreters: bool = False) -> Gate:
     """A Gate that governs a real build inside `repo_root`: reversible/local build
     actions (read, edit, compile, test, LOCAL commit) ALLOW; push/publish/install/
     force/history-rewrite/destructive BLOCK. Reads/writes/commands stay confined to
     repo_root; pair with a jailed Cell to confine in-tool effects."""
-    return Gate(repo_root, deny=BUILD_DENY_SUBSTR, allow_heads=BUILD_ALLOW_HEADS)
+    return Gate(repo_root, deny=BUILD_DENY_SUBSTR, allow_heads=BUILD_ALLOW_HEADS,
+                unjailed=unjailed, allow_unjailed_interpreters=allow_unjailed_interpreters)
 
 
 def build_cell(repo_root: os.PathLike | str, **kwargs):
@@ -68,7 +70,12 @@ def build_cell(repo_root: os.PathLike | str, **kwargs):
     Cell (e.g. `ledger_path`, `use_jail`). This is what lets the self-gate govern an
     actual git/cargo build instead of only the python sandbox."""
     from .cell import Cell
-    return Cell(repo_root, gate=build_gate(repo_root), **kwargs)
+    gate = build_gate(
+        repo_root,
+        unjailed=not kwargs.get("use_jail", True),
+        allow_unjailed_interpreters=kwargs.get("allow_unjailed_interpreters", False),
+    )
+    return Cell(repo_root, gate=gate, **kwargs)
 
 
 __all__ = ["build_gate", "build_cell", "BUILD_ALLOW_HEADS", "BUILD_DENY_SUBSTR",
