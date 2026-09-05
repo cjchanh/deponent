@@ -30,7 +30,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .claims import ClaimSet, attest
-from .gate import Gate, GateDecision, gate_only_head_decision, tokenize_command
+from .gate import (
+    Gate,
+    GateDecision,
+    argument_path_escapes,
+    gate_only_head_decision,
+    tokenize_command,
+)
 from .jail import jail_available, run_jailed, select_backend
 from .ledger import Ledger
 
@@ -163,11 +169,21 @@ class Cell:
         if not segments[0]:
             return GateDecision("BLOCK", "unparsable-command",
                                 "gate-only mode refused an empty command segment")
-        return gate_only_head_decision(
+        blocked = gate_only_head_decision(
             segments[0][0],
             allow_unjailed_interpreters=self._interpreters_opted_in(),
             allow_unjailed_heads=self._unjailed_heads(),
         )
+        if blocked is not None:
+            return blocked
+        in_sandbox = getattr(self.gate, "_in_sandbox", lambda _p: False)
+        for t in segments[0][1:]:
+            if argument_path_escapes(t, in_sandbox):
+                return GateDecision(
+                    "BLOCK", "arg-path-escape",
+                    f"argument path escapes sandbox: {t!r}",
+                )
+        return None
 
     def _interpreters_opted_in(self) -> bool:
         """Gate-only interpreters run only when BOTH the Cell and its gate opted in:

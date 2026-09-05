@@ -96,6 +96,12 @@ class TestGateBlock(unittest.TestCase):
         for cmd in ("echo hi", "ls", "python3 run.py"):
             self.assertEqual(self.gate.evaluate("run_cmd", {"cmd": cmd}).verdict, "ALLOW", cmd)
 
+    def test_block_flag_glued_output_path(self):
+        d = self.gate.evaluate("run_cmd", {"cmd": "sort -o/tmp/x data.txt"})
+        self.assertEqual(d.verdict, "BLOCK")
+        self.assertEqual(d.blast_class, "arg-path-escape")
+        self.assertIn("-o/tmp/x", d.reason)
+
 
 if __name__ == "__main__":
     unittest.main()

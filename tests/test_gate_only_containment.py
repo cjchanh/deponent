@@ -469,6 +469,77 @@ class TestGateOnlyContainment(unittest.TestCase):
             r = cell.act("run_cmd", {"cmd": "python3 -c pass"})
         self.assertEqual(r.decision.verdict, "BLOCK")
 
+    def test_sort_o_glued_tmp_is_arg_path_escape_jailed_and_unjailed(self):
+        cmd = "sort -o/tmp/x data.txt"
+        for g in (self.unjailed, Gate(self.work, unjailed=False)):
+            d = g.evaluate("run_cmd", {"cmd": cmd})
+            self.assertEqual((d.verdict, d.blast_class), ("BLOCK", "arg-path-escape"))
+            self.assertIn("-o/tmp/x", d.reason)
+
+    def test_sort_output_equals_glued_tmp_is_arg_path_escape(self):
+        cmd = "sort --output=/tmp/x data.txt"
+        for g in (self.unjailed, Gate(self.work, unjailed=False)):
+            d = g.evaluate("run_cmd", {"cmd": cmd})
+            self.assertEqual((d.verdict, d.blast_class), ("BLOCK", "arg-path-escape"))
+            self.assertIn("--output=/tmp/x", d.reason)
+
+    def test_sort_o_glued_parent_blocks_and_dot_slash_inside_allows(self):
+        stripped = Gate(self.work, unjailed=True, deny=())
+        parent = stripped.evaluate("run_cmd", {"cmd": "sort -o../x data.txt"})
+        self.assertEqual((parent.verdict, parent.blast_class), ("BLOCK", "arg-path-escape"))
+        self.assertIn("-o../x", parent.reason)
+        for g in (self.unjailed, Gate(self.work, unjailed=False), stripped):
+            d = g.evaluate("run_cmd", {"cmd": "sort -o../x data.txt"})
+            self.assertEqual(d.verdict, "BLOCK", g)
+            inside = g.evaluate("run_cmd", {"cmd": "sort -o./inside.txt data.txt"})
+            self.assertEqual(inside.verdict, "ALLOW", g)
+
+    def test_grep_f_glued_private_tmp_is_arg_path_escape(self):
+        cmd = "grep -f/private/tmp/x data.txt"
+        for g in (self.unjailed, Gate(self.work, unjailed=False)):
+            d = g.evaluate("run_cmd", {"cmd": cmd})
+            self.assertEqual((d.verdict, d.blast_class), ("BLOCK", "arg-path-escape"))
+            self.assertIn("-f/private/tmp/x", d.reason)
+
+    def test_cat_n_allows_sort_t_slash_fail_closed_blocks(self):
+        self.assertEqual(
+            self.unjailed.evaluate("run_cmd", {"cmd": "cat -n data.txt"}).verdict, "ALLOW"
+        )
+        d = self.unjailed.evaluate("run_cmd", {"cmd": "sort -t/ data.txt"})
+        self.assertEqual((d.verdict, d.blast_class), ("BLOCK", "arg-path-escape"))
+        self.assertIn("-t/", d.reason)
+
+    def test_permissive_gate_glued_sort_never_reaches_subprocess(self):
+        class Permissive(Gate):
+            def evaluate(self, tool, params):  # noqa: ARG002
+                return GateDecision("ALLOW", "bounded-local-exec", "permissive test gate")
+
+        cell = Cell(self.work, ledger_path=self.work / "l-glued.jsonl", use_jail=False,
+                    gate=Permissive(self.work, unjailed=True))
+        with patch("deponent.cell.subprocess.run",
+                   side_effect=AssertionError("must not execute")):
+            r = cell.act("run_cmd", {"cmd": "sort -o/tmp/x data.txt"})
+        self.assertEqual((r.decision.verdict, r.decision.blast_class),
+                         ("BLOCK", "arg-path-escape"))
+        self.assertEqual(r.entry["verdict"], "BLOCK")
+        self.assertIn("-o/tmp/x", r.decision.reason)
+        self.assertTrue(r.output.startswith("BLOCKED ["))
+
+    def test_flag_path_candidates_four_forms(self):
+        from deponent.gate import flag_path_candidates
+        self.assertIn("/tmp/x", flag_path_candidates("-o/tmp/x"))
+        self.assertIn("/tmp/x", flag_path_candidates("--output=/tmp/x"))
+        self.assertIn("../x", flag_path_candidates("-o../x"))
+        self.assertIn("./inside.txt", flag_path_candidates("-o./inside.txt"))
+
+    def test_readme_mentions_glued_flag_path_containment(self):
+        text = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "argument paths are containment-checked whether spaced or glued to a flag "
+            "(`-o/tmp/x`, `--output=/tmp/x`)",
+            text,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

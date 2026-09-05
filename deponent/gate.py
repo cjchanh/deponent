@@ -127,6 +127,62 @@ _SUBST = ("$(", "`", "${")
 _REDIR = (">", "<")
 
 
+def flag_path_candidates(token: str) -> list[str]:
+    """Path-looking substrings glued onto a dash-prefixed argv token.
+
+    Candidate set, stable order, duplicates dropped: after `=`, from the first
+    `/`, token[2:], token[len(dash-run):]. Non-flag tokens yield [].
+    """
+    if not isinstance(token, str) or not token.startswith("-"):
+        return []
+    out: list[str] = []
+
+    def add(c: str) -> None:
+        if c and c not in out:
+            out.append(c)
+
+    eq = token.find("=")
+    if eq >= 0:
+        add(token[eq + 1:])
+    sl = token.find("/")
+    if sl >= 0:
+        add(token[sl:])
+    if len(token) >= 2:
+        add(token[2:])
+    n = 0
+    while n < len(token) and token[n] == "-":
+        n += 1
+    add(token[n:])
+    return out
+
+
+def _pathish(value: str) -> bool:
+    return "/" in value or value in (".", "..")
+
+
+def argument_path_escapes(token: str, in_sandbox) -> bool:
+    """True when a run_cmd argv token names a path outside the sandbox."""
+    if not isinstance(token, str) or "\x00" in token:
+        return True
+    if token.startswith("-"):
+        candidates = flag_path_candidates(token)
+    elif _pathish(token):
+        candidates = [token]
+    else:
+        return False
+    for c in candidates:
+        if not _pathish(c):
+            continue
+        if c.startswith("/") and (("." + c) in candidates or (".." + c) in candidates):
+            continue
+        try:
+            if not in_sandbox(c):
+                return True
+        except Exception:
+            return True
+    return False
+
+
 def tokenize_command(cmd: str) -> list[list[str]]:
     """Split on physical lines, then shlex-tokenize each into argv segments.
 
@@ -241,11 +297,9 @@ class Gate:
             if head not in self.allow_heads:
                 return GateDecision("BLOCK", "program-not-allowlisted", f"program {head!r} not in allowlist")
             for t in toks[1:]:
-                if t.startswith("-"):
-                    continue
-                if "/" in t or t in (".", ".."):
-                    if not self._in_sandbox(t):
-                        return GateDecision("BLOCK", "arg-path-escape", f"argument path escapes sandbox: {t!r}")
+                if argument_path_escapes(t, self._in_sandbox):
+                    return GateDecision("BLOCK", "arg-path-escape",
+                                        f"argument path escapes sandbox: {t!r}")
         if self.unjailed:
             for toks in segments:
                 if not toks:
@@ -289,4 +343,4 @@ class Gate:
 
 __all__ = ["Gate", "GateDecision", "DENY_SUBSTR", "ALLOW_HEADS",
            "GATE_ONLY_SAFE_HEADS", "INTERPRETER_HEADS", "is_interpreter_head",
-           "gate_only_head_decision", "tokenize_command"]
+           "gate_only_head_decision", "tokenize_command", "flag_path_candidates"]
