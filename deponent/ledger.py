@@ -23,8 +23,9 @@ that still re-links cleanly from genesis, so a chain missing its last N decision
 verifies as intact — a hash chain has no built-in length commitment. To detect
 truncation you need an external anchor that commits the head + length: that is
 exactly what a sealed receipt does (receipts.py binds a specific head hash), and
-`verify_entries(..., expected_len=N)` below enforces a known length when the caller
-has one. Truncation is caught by the receipt/length anchor, not by the chain alone.
+`verify_entries(..., expected_length=N, expected_head=h)` (and `verify` likewise)
+enforces a known length and head when the caller has one. Truncation and a full
+re-chain are caught by that external head/length anchor, not by the chain alone.
 """
 from __future__ import annotations
 
@@ -82,18 +83,29 @@ class Ledger:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         return entry
 
+    def head(self) -> tuple[str, int]:
+        """Last `entry_hash` and entry count. Empty chain -> `(GENESIS, 0)` so a
+        published empty head is distinct from `verify(expected_head=None)` skip."""
+        if not self.entries:
+            return self.GENESIS, 0
+        return self.entries[-1].get("entry_hash", self.GENESIS), len(self.entries)
+
     @classmethod
     def verify_entries(cls, entries: list[dict], genesis: str | None = None,
+                       expected_head: str | None = None,
+                       expected_length: int | None = None,
                        expected_len: int | None = None) -> tuple[bool, str]:
         """Recompute a chain from a list of stored entries (no live chain needed).
         Returns (ok, message). Any mutated/reordered entry -> (False, where).
 
-        `expected_len`: when the caller knows how many entries the chain SHOULD
-        have (from a sealed receipt or an out-of-band count), pass it to catch
-        TRUNCATION — a shorter chain re-links cleanly from genesis and would
-        otherwise verify as intact. Fail-closed: a length mismatch is a break."""
-        if expected_len is not None and len(entries) != expected_len:
-            return False, f"length mismatch: {len(entries)} entries, expected {expected_len} (truncation?)"
+        `expected_length` (alias `expected_len`) and `expected_head`: when the
+        caller has an external anchor (a sealed receipt or `Ledger.head()`),
+        pass them to catch TRUNCATION and a full re-chain — a shorter or
+        rewritten chain re-links cleanly from genesis and would otherwise
+        verify as intact. Fail-closed: a mismatch is a break."""
+        length = expected_length if expected_length is not None else expected_len
+        if length is not None and len(entries) != length:
+            return False, f"length mismatch: {len(entries)} entries, expected {length}"
         prev = genesis if genesis is not None else cls.GENESIS
         for i, e in enumerate(entries):
             payload = {k: e[k] for k in e if k not in ("prev_hash", "entry_hash")}
@@ -102,11 +114,19 @@ class Ledger:
             if e.get("entry_hash") != cls._hash(prev, payload):
                 return False, f"entry {i}: hash mismatch (tampered)"
             prev = e["entry_hash"]
+        if expected_head is not None:
+            actual = entries[-1].get("entry_hash") if entries else cls.GENESIS
+            if actual != expected_head:
+                return False, f"head mismatch: {actual}, expected {expected_head}"
         return True, f"chain intact ({len(entries)} entries)"
 
-    def verify(self) -> tuple[bool, str]:
+    def verify(self, expected_head: str | None = None,
+               expected_length: int | None = None) -> tuple[bool, str]:
         """Recompute the live chain; returns (ok, message)."""
-        return self.verify_entries(self.entries, self.GENESIS)
+        return self.verify_entries(
+            self.entries, self.GENESIS,
+            expected_head=expected_head, expected_length=expected_length,
+        )
 
     def to_dict(self) -> dict:
         """Serializable snapshot of the chain for persistence (see receipts.py)."""

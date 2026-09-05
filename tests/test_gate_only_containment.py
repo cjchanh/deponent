@@ -540,6 +540,67 @@ class TestGateOnlyContainment(unittest.TestCase):
             text,
         )
 
+    def test_symlink_inside_sandbox_pointing_outside_is_blocked(self):
+        outside = Path(tempfile.mkdtemp(prefix="goc-outside-"))
+        secret = outside / "x"
+        secret.write_text("secret-outside")
+        (self.work / "link").symlink_to(outside)
+        cell = Cell(self.work, ledger_path=self.work / "l-sym-out.jsonl", use_jail=False)
+        read = cell.act("read_file", {"path": "link/x"})
+        write = cell.act("write_file", {"path": "link/x", "content": "pwned"})
+        cat = cell.act("run_cmd", {"cmd": "cat link/x"})
+        for r, cls in (
+            (read, "out-of-sandbox-read"),
+            (write, "out-of-sandbox-write"),
+            (cat, "arg-path-escape"),
+        ):
+            self.assertEqual(r.decision.verdict, "BLOCK", r.decision)
+            self.assertEqual(r.decision.blast_class, cls)
+        self.assertEqual(secret.read_text(), "secret-outside")
+
+    def test_symlink_inside_sandbox_pointing_inside_is_allowed(self):
+        inside = self.work / "inside"
+        inside.mkdir()
+        (inside / "x").write_text("ok")
+        (self.work / "link").symlink_to(inside)
+        cell = Cell(self.work, ledger_path=self.work / "l-sym-in.jsonl", use_jail=False)
+        read = cell.act("read_file", {"path": "link/x"})
+        self.assertEqual(read.decision.verdict, "ALLOW")
+        self.assertEqual(read.output, "ok")
+        write = cell.act("write_file", {"path": "link/x", "content": "new"})
+        self.assertEqual(write.decision.verdict, "ALLOW")
+        self.assertEqual((inside / "x").read_text(), "new")
+        cat = cell.act("run_cmd", {"cmd": "cat link/x"})
+        self.assertEqual(cat.decision.verdict, "ALLOW")
+        self.assertIn("new", cat.output)
+
+    def test_write_through_outside_symlink_never_lands_outside(self):
+        outside = Path(tempfile.mkdtemp(prefix="goc-outside-hole-"))
+        secret = outside / "x"
+        sentinel = "sentinel-bytes"
+        secret.write_text(sentinel)
+        (self.work / "link").symlink_to(outside)
+
+        class Permissive(Gate):
+            def evaluate(self, tool, params):  # noqa: ARG002
+                return GateDecision("ALLOW", "reversible-local-write", "permissive test gate")
+
+        cell = Cell(self.work, ledger_path=self.work / "l-sym-hole.jsonl", use_jail=False,
+                    gate=Permissive(self.work, unjailed=True))
+        write = cell.act("write_file", {"path": "link/x", "content": "pwned"})
+        self.assertEqual(write.decision.verdict, "BLOCK")
+        self.assertEqual(write.decision.blast_class, "out-of-sandbox-write")
+        self.assertEqual(write.entry["verdict"], "BLOCK")
+        self.assertTrue(write.output.startswith("BLOCKED ["))
+        self.assertEqual(secret.read_text(), sentinel)
+        read = cell.act("read_file", {"path": "link/x"})
+        self.assertEqual(read.decision.verdict, "BLOCK")
+        self.assertEqual(read.decision.blast_class, "out-of-sandbox-read")
+        self.assertEqual(read.entry["verdict"], "BLOCK")
+        self.assertNotIn(sentinel, read.output)
+        self.assertNotIn("pwned", secret.read_text())
+        self.assertFalse(write.output.startswith("wrote "))
+
 
 if __name__ == "__main__":
     unittest.main()

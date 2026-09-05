@@ -116,6 +116,10 @@ class Cell:
             guard = self._gate_only_guard(tool, params)
             if guard is not None:
                 decision = guard
+        if decision.verdict != "BLOCK":
+            guard = self._sandbox_path_guard(tool, params)
+            if guard is not None:
+                decision = guard
         if decision.verdict == "BLOCK":
             entry = self.ledger.record(agent=agent, tool=tool, params=params,
                                        decision=decision, outcome="",
@@ -146,6 +150,19 @@ class Cell:
         result = ActResult(decision, output, entry, rr)
         self.transcript.append(result)
         return result
+
+    def _sandbox_path_guard(self, tool: str, params: dict) -> GateDecision | None:
+        """Rewrite a permissive ALLOW on write_file/read_file to BLOCK when the
+        resolved path leaves the sandbox (outside-pointing symlink). Recorded as
+        BLOCK, not raise-and-record-ALLOW."""
+        if tool not in ("write_file", "read_file"):
+            return None
+        path = params.get("path", "") if isinstance(params, dict) else ""
+        in_sandbox = getattr(self.gate, "_in_sandbox", lambda _p: False)
+        if in_sandbox(path):
+            return None
+        blast = "out-of-sandbox-write" if tool == "write_file" else "out-of-sandbox-read"
+        return GateDecision("BLOCK", blast, f"path escapes sandbox: {path!r}")
 
     def _gate_only_guard(self, tool: str, params: dict) -> GateDecision | None:
         """Containment check for gate-only execution: exactly one parsable segment;
@@ -244,12 +261,18 @@ class Cell:
         return f"ERROR: no implementation for tool {tool!r}"
 
     def _write_file(self, path: str, content: str) -> str:
+        in_sandbox = getattr(self.gate, "_in_sandbox", lambda _p: False)
+        if not in_sandbox(path):
+            raise ValueError(f"path escapes sandbox: {path!r}")
         p = self.sandbox / path
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content)
         return f"wrote {len(content)} bytes -> {path}"
 
     def _read_file(self, path: str) -> str:
+        in_sandbox = getattr(self.gate, "_in_sandbox", lambda _p: False)
+        if not in_sandbox(path):
+            raise ValueError(f"path escapes sandbox: {path!r}")
         p = self.sandbox / path
         return p.read_text() if p.exists() else f"ERROR: {path} not found"
 

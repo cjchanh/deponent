@@ -76,6 +76,34 @@ class TestReceipts(unittest.TestCase):
         self.assertTrue(p.exists())
         self.assertIn("verified   : YES", p.read_text())
 
+    def test_receipt_carries_ledger_head_and_length(self):
+        led = _ledger_with_entries(self.work)
+        head, length = led.head()
+        r = RA.persist(led, session_id="testsess0002", model="north-mini-code-mlx",
+                       task="ledger head", outcome="GOVERNED_PASS", root=self.root)
+        self.assertEqual(r["ledger_head"], head)
+        self.assertEqual(r["ledger_length"], length)
+        self.assertEqual(r["ledger_head"], led.head()[0])
+        self.assertEqual(length, 3)
+
+    def test_empty_receipt_ledger_head_is_genesis(self):
+        led = Ledger(self.work / "empty.jsonl")
+        r = RA.persist(led, session_id="emptyhead0001", model="north-mini-code-mlx",
+                       task="empty head", outcome="GOVERNED_PASS", root=self.root)
+        self.assertEqual(r["ledger_head"], Ledger.GENESIS)
+        self.assertEqual(r["ledger_length"], 0)
+        self.assertTrue(RA.verify(r["receipt_id"], root=self.root))
+
+    def test_verify_rejects_re_signed_truncated_chain_via_ledger_head(self):
+        r = self._persist()
+        p = self.root / RA.PRODUCER / f"{r['receipt_id']}.json"
+        data = json.loads(p.read_text())
+        data["chain"]["entries"] = data["chain"]["entries"][:1]
+        canonical = {k: v for k, v in data.items() if k != "signature"}
+        data["signature"] = RA._sha256(canonical)
+        p.write_text(json.dumps(data))
+        self.assertFalse(RA.verify(r["receipt_id"], root=self.root))
+
 
 if __name__ == "__main__":
     unittest.main()

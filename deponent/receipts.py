@@ -101,6 +101,9 @@ def persist(ledger: Ledger, *, session_id: str | None = None,
             if key in entry:
                 body[key] = entry[key]
                 break
+    ledger_head, ledger_length = ledger.head()
+    body["ledger_head"] = ledger_head
+    body["ledger_length"] = ledger_length
     body["signature"] = _sha256(body)  # content hash over everything above (no signature key yet)
 
     # Atomic write: temp file -> rename on the same filesystem.
@@ -137,8 +140,15 @@ def verify(receipt_id: str, *, producer: str = PRODUCER, root: Path = RECEIPTS_R
     entries = chain.get("entries")
     if not isinstance(entries, list):
         return False
-    # 1) hash-chain integrity (any mutated entry breaks the re-link)
-    ok, _ = Ledger.verify_entries(entries, chain.get("genesis"))
+    # 1) hash-chain integrity (any mutated entry breaks the re-link).
+    # Consult the receipt's published head/length so truncation or a re-chain
+    # that still re-links from genesis is caught even if the content-hash is
+    # recomputed over the truncated body.
+    ok, _ = Ledger.verify_entries(
+        entries, chain.get("genesis"),
+        expected_head=data.get("ledger_head"),
+        expected_length=data.get("ledger_length"),
+    )
     if not ok:
         return False
     # 2) receipt signature over the canonical body (any mutated metadata breaks it)
