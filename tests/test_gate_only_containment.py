@@ -535,8 +535,9 @@ class TestGateOnlyContainment(unittest.TestCase):
     def test_readme_mentions_glued_flag_path_containment(self):
         text = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(
-            "argument paths are containment-checked whether spaced or glued to a flag "
-            "(`-o/tmp/x`, `--output=/tmp/x`)",
+            "argument paths are containment-checked whether spaced, glued to a flag "
+            "(`-o/tmp/x`, `--output=/tmp/x`), or reached through a symlink that "
+            "already exists inside the sandbox",
             text,
         )
 
@@ -664,6 +665,58 @@ class TestGateOnlyContainment(unittest.TestCase):
             self.assertNotIn("resolved parent", doc)
         self.assertIn("same Path", helper_doc)
         self.assertIn("swapped", helper_doc)
+
+
+class TestPrePlantedSymlinkContainment(unittest.TestCase):
+    """D-2 (external reviewer recheck, 2026-09-05): a symlink that ALREADY sits
+    inside the sandbox and points outside it turns a bare token into an
+    out-of-sandbox read. Every argv token is resolved, not only path-looking ones."""
+
+    def setUp(self):
+        self.work = Path(tempfile.mkdtemp(prefix="goc-d2-"))
+        self.outside = Path(tempfile.mkdtemp(prefix="goc-out-"))
+        (self.outside / "secret.txt").write_text("OUTSIDE-SECRET\n")
+        (self.work / "inside.txt").write_text("INSIDE\n")
+        (self.work / "hn").symlink_to(self.outside / "secret.txt")
+        (self.work / "outdir").symlink_to(self.outside)
+        (self.work / "inlink").symlink_to(self.work / "inside.txt")
+        self.gate = Gate(self.work, unjailed=True)
+
+    def test_bare_token_naming_an_outside_symlink_is_blocked(self):
+        for cmd in ("cat hn", "head hn", "sort hn", "wc hn",
+                    "grep localhost hn", "ls outdir", "diff hn inside.txt"):
+            d = self.gate.evaluate("run_cmd", {"cmd": cmd})
+            self.assertEqual((cmd, d.verdict, d.blast_class),
+                             (cmd, "BLOCK", "arg-path-escape"))
+
+    def test_glued_flag_value_naming_an_outside_symlink_is_blocked(self):
+        d = self.gate.evaluate("run_cmd", {"cmd": "sort -ohn inside.txt"})
+        self.assertEqual((d.verdict, d.blast_class), ("BLOCK", "arg-path-escape"))
+
+    def test_jail_mode_blocks_the_same_bare_token(self):
+        jailed = Gate(self.work)
+        d = jailed.evaluate("run_cmd", {"cmd": "cat hn"})
+        self.assertEqual((d.verdict, d.blast_class), ("BLOCK", "arg-path-escape"))
+
+    def test_in_sandbox_names_and_plain_arguments_still_allowed(self):
+        for cmd in ("cat inlink", "cat inside.txt", "grep localhost inside.txt",
+                    "echo hello", "sort -o out.txt inside.txt", "cat -n inside.txt"):
+            d = self.gate.evaluate("run_cmd", {"cmd": cmd})
+            self.assertEqual((cmd, d.verdict), (cmd, "ALLOW"))
+
+    def test_permissive_gate_cell_never_executes_the_outside_read(self):
+        class Permissive(Gate):
+            def evaluate(self, tool, params):  # noqa: ARG002
+                return GateDecision("ALLOW", "bounded-local-exec", "permissive test gate")
+
+        cell = Cell(self.work, ledger_path=self.work / "l.jsonl", use_jail=False,
+                    gate=Permissive(self.work, unjailed=True))
+        with patch("deponent.cell.subprocess.run",
+                   side_effect=AssertionError("must not execute")):
+            r = cell.act("run_cmd", {"cmd": "cat hn"})
+        self.assertEqual((r.decision.verdict, r.decision.blast_class),
+                         ("BLOCK", "arg-path-escape"))
+        self.assertEqual(r.entry["verdict"], "BLOCK")
 
 
 if __name__ == "__main__":

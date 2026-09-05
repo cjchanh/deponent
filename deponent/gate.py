@@ -161,18 +161,19 @@ def _pathish(value: str) -> bool:
 
 
 def argument_path_escapes(token: str, in_sandbox) -> bool:
-    """True when a run_cmd argv token names a path outside the sandbox."""
+    """True when a run_cmd argv token names a path outside the sandbox.
+
+    Every token is resolved, not only the ones that LOOK like paths: a symlink
+    that already sits inside the sandbox and points outside it (planted by
+    whatever populated the sandbox — a clone, a fixture, an earlier tool run)
+    makes a bare name an out-of-sandbox read. `cat hn` with `hn` -> an outside
+    file must refuse exactly as `cat /outside/file` does. A token that names
+    nothing resolves inside the sandbox, so ordinary arguments stay allowed.
+    """
     if not isinstance(token, str) or "\x00" in token:
         return True
-    if token.startswith("-"):
-        candidates = flag_path_candidates(token)
-    elif _pathish(token):
-        candidates = [token]
-    else:
-        return False
+    candidates = flag_path_candidates(token) if token.startswith("-") else [token]
     for c in candidates:
-        if not _pathish(c):
-            continue
         if c.startswith("/") and (("." + c) in candidates or (".." + c) in candidates):
             continue
         try:
