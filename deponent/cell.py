@@ -306,8 +306,8 @@ class Cell:
         # Gate-only mode: no OS confinement. act() has already recorded a BLOCK for
         # chains, unparsable input and interpreters via _gate_only_guard; this path
         # runs the single argv the gate tokenized, without a shell. Re-derived with the
-        # same tokenizer (one function) and re-checked in case _execute is called
-        # directly by a subclass.
+        # same tokenizer (one function) and re-checked in case _execute / _run_cmd is
+        # called directly by a subclass.
         try:
             segments = tokenize_command(cmd)
         except ValueError:
@@ -325,6 +325,10 @@ class Cell:
         )
         if blocked is not None:
             return f"ERROR: {blocked.reason}"
+        in_sandbox = getattr(self.gate, "_in_sandbox", lambda _p: False)
+        for t in argv[1:]:
+            if argument_path_escapes(t, in_sandbox):
+                return f"ERROR: argument path escapes sandbox: {t!r}"
         r = subprocess.run(argv, shell=False, cwd=str(self.sandbox), env=env,
                            capture_output=True, text=True, timeout=self.wall_s)
         return f"exit={r.returncode}\n{(r.stdout + r.stderr)[-2800:]}"

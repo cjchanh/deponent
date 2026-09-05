@@ -536,7 +536,8 @@ class TestGateOnlyContainment(unittest.TestCase):
         text = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(
             "argument paths are containment-checked whether spaced, glued to a flag "
-            "(`-o/tmp/x`, `--output=/tmp/x`), or reached through a symlink that "
+            "(`-o/tmp/x`, `--output=/tmp/x`), dash-prefixed after `--` "
+            "(`cat -- -secret`), or reached through a symlink that "
             "already exists inside the sandbox",
             text,
         )
@@ -742,6 +743,65 @@ class TestPrePlantedSymlinkContainment(unittest.TestCase):
         self.assertEqual((r.decision.verdict, r.decision.blast_class),
                          ("BLOCK", "arg-path-escape"))
         self.assertEqual(r.entry["verdict"], "BLOCK")
+
+    def test_dash_prefixed_operand_after_double_dash_is_blocked(self):
+        (self.work / "-secret").symlink_to(self.outside / "secret.txt")
+        for cmd in ("cat -- -secret", "head -- -secret"):
+            d = self.gate.evaluate("run_cmd", {"cmd": cmd})
+            self.assertEqual((cmd, d.verdict, d.blast_class),
+                             (cmd, "BLOCK", "arg-path-escape"))
+            self.assertIn("-secret", d.reason)
+        jailed = Gate(self.work)
+        d = jailed.evaluate("run_cmd", {"cmd": "cat -- -secret"})
+        self.assertEqual((d.verdict, d.blast_class), ("BLOCK", "arg-path-escape"))
+        isolated = Path(tempfile.mkdtemp(prefix="goc-d2-hn-"))
+        (isolated / "-hn").symlink_to(self.outside / "secret.txt")
+        g = Gate(isolated, unjailed=True)
+        for cmd in ("cat -- -hn", "sort -- -hn"):
+            d = g.evaluate("run_cmd", {"cmd": cmd})
+            self.assertEqual((cmd, d.verdict, d.blast_class),
+                             (cmd, "BLOCK", "arg-path-escape"))
+            self.assertIn("-hn", d.reason)
+
+    def test_dash_prefixed_in_sandbox_file_and_plain_flags_still_allowed(self):
+        (self.work / "-notes").write_text("DASH-INSIDE\n")
+        for cmd in ("cat -- -notes", "cat -n inside.txt", "echo --",
+                    "head -n 1 inside.txt", "cat -- missing"):
+            d = self.gate.evaluate("run_cmd", {"cmd": cmd})
+            self.assertEqual((cmd, d.verdict), (cmd, "ALLOW"))
+
+    def test_permissive_cell_never_leaks_dash_prefixed_outside_symlink(self):
+        (self.work / "-secret").symlink_to(self.outside / "secret.txt")
+
+        class Permissive(Gate):
+            def evaluate(self, tool, params):  # noqa: ARG002
+                return GateDecision("ALLOW", "bounded-local-exec", "permissive test gate")
+
+        cell = Cell(self.work, ledger_path=self.work / "l-dash.jsonl", use_jail=False,
+                    gate=Permissive(self.work, unjailed=True))
+        with patch("deponent.cell.subprocess.run",
+                   side_effect=AssertionError("must not execute")):
+            r = cell.act("run_cmd", {"cmd": "cat -- -secret"})
+        self.assertEqual((r.decision.verdict, r.decision.blast_class),
+                         ("BLOCK", "arg-path-escape"))
+        self.assertEqual(r.entry["verdict"], "BLOCK")
+        self.assertTrue(r.output.startswith("BLOCKED ["))
+        self.assertNotIn("OUTSIDE-SECRET", r.output)
+        self.assertNotIn("OUTSIDE-SECRET", r.entry.get("outcome", ""))
+
+    def test_run_cmd_direct_call_rechecks_argument_paths(self):
+        cell = Cell(self.work, ledger_path=self.work / "l-direct-cmd.jsonl", use_jail=False)
+        with patch("deponent.cell.subprocess.run",
+                   side_effect=AssertionError("must not execute")):
+            out = cell._run_cmd("cat hn")
+        self.assertIn("escapes sandbox", out)
+        self.assertNotIn("OUTSIDE-SECRET", out)
+
+    def test_pathish_helper_is_removed(self):
+        from deponent import gate as gate_mod
+        src = Path(gate_mod.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("def _pathish", src)
+        self.assertFalse(hasattr(gate_mod, "_pathish"))
 
 
 if __name__ == "__main__":

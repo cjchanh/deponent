@@ -156,10 +156,6 @@ def flag_path_candidates(token: str) -> list[str]:
     return out
 
 
-def _pathish(value: str) -> bool:
-    return "/" in value or value in (".", "..")
-
-
 def argument_path_escapes(token: str, in_sandbox) -> bool:
     """True when a run_cmd argv token names a path outside the sandbox.
 
@@ -167,12 +163,18 @@ def argument_path_escapes(token: str, in_sandbox) -> bool:
     that already sits inside the sandbox and points outside it (planted by
     whatever populated the sandbox — a clone, a fixture, an earlier tool run)
     makes a bare name an out-of-sandbox read. `cat hn` with `hn` -> an outside
-    file must refuse exactly as `cat /outside/file` does. A token that names
-    nothing resolves inside the sandbox, so ordinary arguments stay allowed.
+    file must refuse exactly as `cat /outside/file` does. A dash-prefixed
+    operand (`cat -- -secret`) is resolved as itself, not only as glued-flag
+    leftovers (`ecret` / `secret`). A token that names nothing resolves inside
+    the sandbox, so ordinary arguments stay allowed.
     """
     if not isinstance(token, str) or "\x00" in token:
         return True
-    candidates = flag_path_candidates(token) if token.startswith("-") else [token]
+    candidates = [token]
+    if token.startswith("-"):
+        for c in flag_path_candidates(token):
+            if c not in candidates:
+                candidates.append(c)
     for c in candidates:
         if c.startswith("/") and (("." + c) in candidates or (".." + c) in candidates):
             continue
