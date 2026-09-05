@@ -96,6 +96,11 @@ def persist(ledger: Ledger, *, session_id: str | None = None,
             "commit": _best_effort_commit(Path.cwd()),
         },
     }
+    for key in ("gate_only", "containment"):
+        for entry in reversed(ledger.entries):
+            if key in entry:
+                body[key] = entry[key]
+                break
     body["signature"] = _sha256(body)  # content hash over everything above (no signature key yet)
 
     # Atomic write: temp file -> rename on the same filesystem.

@@ -65,9 +65,10 @@ ALLOW_HEADS = frozenset({
     "ls", "cat", "head", "tail", "pwd", "echo", "grep", "wc",
     "mkdir", "touch", "diff", "true", "sort", "uniq",
 })
-# Command separators. Newline/CR are shell separators too — without them a second
-# LINE's program head would skip the allowlist (an agent smuggling `echo ok\nshred x`).
-_CHAIN_SPLIT = re.compile(r"\s*(?:&&|\|\||;|\||\n|\r)\s*")
+# Interpreter heads refused in gate-only (unjailed) mode unless explicitly opted in.
+INTERPRETER_HEADS = frozenset({"python", "python3", "pytest"})
+# Segment operators after shlex tokenization (quoted copies stay inside words).
+_OPERATORS = frozenset({";", "&&", "||", "|"})
 _SUBST = ("$(", "`", "${")
 # Shell redirects write/read arbitrary host paths the gate cannot reliably extract
 # from the token stream (a target glued to the operator, e.g. `x>>/etc/p`, tokenizes
@@ -75,6 +76,32 @@ _SUBST = ("$(", "`", "${")
 # block the redirect class wholesale — legitimate writes go through the gated
 # `write_file` tool, not a shell redirect.
 _REDIR = (">", "<")
+
+
+def tokenize_command(cmd: str) -> list[list[str]]:
+    """Split on physical lines, then shlex-tokenize each into argv segments.
+
+    `;`, `&&`, `||`, `|` become standalone tokens even when glued (`echo a;echo b`);
+    a quoted separator stays inside its word. Raises ValueError on unparsable input.
+    """
+    segments: list[list[str]] = []
+    for line in re.split(r"[\n\r]+", cmd):
+        line = line.strip()
+        if not line:
+            continue
+        lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+        lexer.wordchars += "-./_"
+        current: list[str] = []
+        for tok in lexer:
+            if tok in _OPERATORS:
+                if current:
+                    segments.append(current)
+                    current = []
+            else:
+                current.append(tok)
+        if current:
+            segments.append(current)
+    return segments
 
 
 class Gate:
@@ -90,7 +117,9 @@ class Gate:
                  deny: tuple[str, ...] = DENY_SUBSTR,
                  allow_heads: frozenset[str] = ALLOW_HEADS,
                  reach: ReachOracle | None = None,
-                 max_reach: int | None = None):
+                 max_reach: int | None = None,
+                 unjailed: bool = False,
+                 allow_unjailed_interpreters: bool = False):
         self.sandbox = Path(sandbox).resolve()
         self.deny = tuple(deny)
         self.allow_heads = frozenset(allow_heads)
@@ -100,6 +129,8 @@ class Gate:
         # default (reach=None) behaviour is byte-identical to the substring gate.
         self.reach = reach
         self.max_reach = max_reach
+        self.unjailed = bool(unjailed)
+        self.allow_unjailed_interpreters = bool(allow_unjailed_interpreters)
 
     # ---- path containment ----
     def _in_sandbox(self, path: str) -> bool:
@@ -146,27 +177,38 @@ class Gate:
         if any(r in cmd for r in _REDIR):
             return GateDecision("BLOCK", "shell-redirect",
                                 "shell redirection not allowed; use the write_file tool for gated writes")
-        # every chained segment's program head must be allowlisted
-        for seg in _CHAIN_SPLIT.split(cmd):
-            seg = seg.strip()
-            if not seg:
-                continue
-            try:
-                toks = shlex.split(seg)
-            except ValueError:
-                return GateDecision("BLOCK", "unparsable-command", f"cannot tokenize: {seg!r}")
+        try:
+            segments = tokenize_command(cmd)
+        except ValueError:
+            return GateDecision("BLOCK", "unparsable-command", f"cannot tokenize: {cmd!r}")
+        if not segments:
+            return GateDecision("BLOCK", "empty-command", "empty or non-string command")
+        for toks in segments:
             if not toks:
                 continue
             head = os.path.basename(toks[0])
             if head not in self.allow_heads:
                 return GateDecision("BLOCK", "program-not-allowlisted", f"program {head!r} not in allowlist")
-            # any path-like argument must stay in the sandbox
             for t in toks[1:]:
                 if t.startswith("-"):
                     continue
                 if "/" in t or t in (".", ".."):
                     if not self._in_sandbox(t):
                         return GateDecision("BLOCK", "arg-path-escape", f"argument path escapes sandbox: {t!r}")
+        if self.unjailed:
+            if not self.allow_unjailed_interpreters:
+                for toks in segments:
+                    head = os.path.basename(toks[0])
+                    if head in INTERPRETER_HEADS:
+                        return GateDecision(
+                            "BLOCK", "interpreter-unjailed",
+                            f"interpreter {head!r} refused in gate-only mode",
+                        )
+            if len(segments) > 1:
+                return GateDecision(
+                    "BLOCK", "chain-unjailed",
+                    "gate-only mode allows a single command segment",
+                )
         return GateDecision("ALLOW", "bounded-local-exec", "allowlisted, in-sandbox, non-chained-to-deny")
 
     # ---- graph-derived blast radius (the real reach classifier) ----
@@ -192,4 +234,5 @@ class Gate:
         return GateDecision("ALLOW", cls, f"write inside sandbox; blast radius = {detail}", rr)
 
 
-__all__ = ["Gate", "GateDecision", "DENY_SUBSTR", "ALLOW_HEADS"]
+__all__ = ["Gate", "GateDecision", "DENY_SUBSTR", "ALLOW_HEADS",
+           "INTERPRETER_HEADS", "tokenize_command"]

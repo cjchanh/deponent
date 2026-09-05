@@ -53,7 +53,8 @@ class Ledger:
         return hashlib.sha256(f"{prev}\n{body}".encode("utf-8")).hexdigest()
 
     def record(self, *, agent: str, tool: str, params: dict, decision: GateDecision,
-               outcome: str = "") -> dict:
+               outcome: str = "", gate_only: bool | None = None,
+               containment: str | None = None) -> dict:
         """Append one entry: (who, what, the verdict, a hash of the outcome). The
         outcome is stored as a sha256, not verbatim — the ledger testifies that a
         specific output occurred without itself becoming a data-exfiltration sink."""
@@ -67,6 +68,10 @@ class Ledger:
             "reason": decision.reason,
             "outcome_sha256": hashlib.sha256(outcome.encode("utf-8")).hexdigest() if outcome else "",
         }
+        if gate_only is not None:
+            payload["gate_only"] = gate_only
+        if containment is not None:
+            payload["containment"] = containment
         entry = dict(payload)
         entry["prev_hash"] = self.prev
         entry["entry_hash"] = self._hash(self.prev, payload)

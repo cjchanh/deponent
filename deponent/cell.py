@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .claims import ClaimSet, attest
-from .gate import Gate, GateDecision
+from .gate import Gate, GateDecision, tokenize_command
 from .jail import jail_available, run_jailed
 from .ledger import Ledger
 
@@ -63,12 +63,18 @@ class Cell:
 
     def __init__(self, sandbox: Path | str, *, ledger_path: Path | str | None = None,
                  use_jail: bool = True, mem_cap_mb: int = 2048, wall_s: int = 90,
-                 gate: Gate | None = None, reconcile: bool = True):
+                 gate: Gate | None = None, reconcile: bool = True,
+                 allow_unjailed_interpreters: bool = False):
         self.sandbox = Path(sandbox).resolve()
         self.sandbox.mkdir(parents=True, exist_ok=True)
-        self.gate = gate or Gate(self.sandbox)
+        self.gate = gate or Gate(
+            self.sandbox,
+            unjailed=not use_jail,
+            allow_unjailed_interpreters=allow_unjailed_interpreters,
+        )
         self.ledger = Ledger(ledger_path)
         self.use_jail = use_jail
+        self.allow_unjailed_interpreters = allow_unjailed_interpreters
         self.mem_cap_mb = mem_cap_mb
         self.wall_s = wall_s
         # Two-plane reconciliation: snapshot the workspace before/after each action
@@ -86,7 +92,8 @@ class Cell:
         decision = self.gate.evaluate(tool, params)
         if decision.verdict == "BLOCK":
             entry = self.ledger.record(agent=agent, tool=tool, params=params,
-                                       decision=decision, outcome="")
+                                       decision=decision, outcome="",
+                                       **self._disclosure())
             result = ActResult(decision, f"BLOCKED [{decision.blast_class}]: {decision.reason}", entry)
             self.transcript.append(result)
             return result
@@ -108,10 +115,17 @@ class Cell:
                 output += (f"\n[RECONCILE ANOMALY] declared {rr.declared} but also changed: "
                            f"{', '.join(rr.anomalies)}")
         entry = self.ledger.record(agent=agent, tool=tool, params=params,
-                                   decision=decision, outcome=output)
+                                   decision=decision, outcome=output,
+                                   **self._disclosure())
         result = ActResult(decision, output, entry, rr)
         self.transcript.append(result)
         return result
+
+    def _disclosure(self) -> dict:
+        return {
+            "gate_only": not self.use_jail,
+            "containment": "seatbelt" if self.use_jail and jail_available() else "none",
+        }
 
     def verify(self) -> tuple[bool, str]:
         """Prove the testimony intact. Returns (ok, message)."""
@@ -160,10 +174,19 @@ class Cell:
             r = run_jailed(cmd, self.sandbox, env=env,
                            mem_cap_mb=self.mem_cap_mb, wall_s=self.wall_s)
             return f"exit={r['returncode']}\n{r['output']}"
-        # Gate-only mode (explicit opt-out of the in-language jail): the shell/path
-        # policy still holds, but there is no network/write confinement. Use only
-        # where the gate is sufficient or another sandbox wraps this process.
-        r = subprocess.run(cmd, shell=True, cwd=str(self.sandbox), env=env,
+        # Gate-only mode: no OS confinement. Run the single argv the gate tokenized,
+        # without a shell. Interpreters require allow_unjailed_interpreters=True.
+        # Fail-closed against a caller-supplied gate that was not built unjailed:
+        # never run more (or less) than the one segment the policy allows.
+        try:
+            segments = tokenize_command(cmd)
+        except ValueError:
+            return "ERROR: gate-only mode refused an unparsable command."
+        if len(segments) != 1:
+            return ("ERROR: gate-only mode runs exactly one command segment; "
+                    f"got {len(segments)} — refusing (fail-closed).")
+        argv = segments[0]
+        r = subprocess.run(argv, shell=False, cwd=str(self.sandbox), env=env,
                            capture_output=True, text=True, timeout=self.wall_s)
         return f"exit={r.returncode}\n{(r.stdout + r.stderr)[-2800:]}"
 

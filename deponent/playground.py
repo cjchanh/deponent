@@ -180,6 +180,7 @@ class ClassifyCell(Cell):
     def __init__(self, sandbox: Path | str, **kw: Any):
         # reconcile/jail OFF: nothing executes, so there is nothing to reconcile or jail.
         kw.setdefault("use_jail", False)
+        kw.setdefault("allow_unjailed_interpreters", True)
         kw["reconcile"] = False
         super().__init__(sandbox, **kw)
 
