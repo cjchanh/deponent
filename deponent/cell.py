@@ -31,7 +31,7 @@ from pathlib import Path
 
 from .claims import ClaimSet, attest
 from .gate import Gate, GateDecision, tokenize_command, is_interpreter_head
-from .jail import jail_available, run_jailed
+from .jail import jail_available, run_jailed, select_backend
 from .ledger import Ledger
 
 try:
@@ -84,6 +84,7 @@ class Cell:
         self.ledger = Ledger(ledger_path)
         self.use_jail = use_jail
         self.allow_unjailed_interpreters = allow_unjailed_interpreters
+        self._last_backend_name = None
         self.mem_cap_mb = mem_cap_mb
         self.wall_s = wall_s
         # Two-plane reconciliation: snapshot the workspace before/after each action
@@ -98,6 +99,7 @@ class Cell:
 
     def act(self, tool: str, params: dict, *, agent: str = "agent") -> ActResult:
         """Gate -> execute (if allowed) -> record. One call, one testified action."""
+        self._last_backend_name = None
         decision = self.gate.evaluate(tool, params)
         if decision.verdict != "BLOCK":
             # Gate-only mode re-checks containment on the execute path so that a
@@ -143,6 +145,8 @@ class Cell:
         if self.use_jail or tool != "run_cmd":
             return None
         cmd = params.get("cmd", "") if isinstance(params, dict) else ""
+        if not isinstance(cmd, str) or not cmd.strip():
+            return GateDecision("BLOCK", "empty-command", "empty or non-string command")
         try:
             segments = tokenize_command(cmd)
         except ValueError as e:
@@ -168,9 +172,15 @@ class Cell:
             getattr(self.gate, "allow_unjailed_interpreters", False))
 
     def _disclosure(self) -> dict:
+        if not self.use_jail:
+            return {"gate_only": True, "containment": "none"}
+        name = self._last_backend_name
+        if name is None:
+            backend = select_backend()
+            name = getattr(backend, "name", None) if backend is not None else None
         return {
-            "gate_only": not self.use_jail,
-            "containment": "seatbelt" if self.use_jail and jail_available() else "none",
+            "gate_only": False,
+            "containment": name if name else "none",
         }
 
     def verify(self) -> tuple[bool, str]:
@@ -217,7 +227,9 @@ class Cell:
             # constrains the *code* an allowed command runs. Fail-closed off-macOS.
             if not jail_available():
                 return "ERROR: sandbox-exec unavailable — refusing to run un-jailed (fail-closed)."
-            r = run_jailed(cmd, self.sandbox, env=env,
+            backend = select_backend()
+            self._last_backend_name = getattr(backend, "name", None) if backend is not None else None
+            r = run_jailed(cmd, self.sandbox, env=env, backend=backend,
                            mem_cap_mb=self.mem_cap_mb, wall_s=self.wall_s)
             return f"exit={r['returncode']}\n{r['output']}"
         # Gate-only mode: no OS confinement. act() has already recorded a BLOCK for

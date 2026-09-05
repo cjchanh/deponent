@@ -70,16 +70,20 @@ ALLOW_HEADS = frozenset({
 # ALLOW_HEADS is already refused as program-not-allowlisted before this check runs.
 INTERPRETER_HEADS = frozenset({
     "python", "python3", "pytest", "pypy", "pypy3", "uv", "uvx", "pip", "pip3",
-    "node", "perl", "ruby", "bash", "sh", "zsh", "dash", "env", "xargs",
+    "node", "nodejs", "perl", "ruby", "bash", "sh", "zsh", "dash", "env", "xargs",
+    "ipython", "deno", "bun", "python.exe", "pythonw",
+    "py", "py.exe",
 })
-_INTERPRETER_HEAD_RE = re.compile(r"^(python|pypy)\d*(\.\d+)?$")
+_INTERPRETER_HEAD_RE = re.compile(
+    r"^(?:python\d.*(?:\.exe)?|python\.exe|pythonw(?:\d.*)?(?:\.exe)?|pypy\d.*|py(?:\.exe)?)$"
+)
 
 
 def is_interpreter_head(head: str) -> bool:
     """True for heads that execute caller-supplied code (versioned interpreters such
     as `python3.12` and path-qualified forms such as `/usr/bin/python3` included).
-    Used only in gate-only mode."""
-    base = os.path.basename(head or "")
+    Used only in gate-only mode. Comparison is case-insensitive (`Python3`, `PY.EXE`)."""
+    base = os.path.basename(head or "").casefold()
     return base in INTERPRETER_HEADS or bool(_INTERPRETER_HEAD_RE.match(base))
 # Segment operators after shlex tokenization (quoted copies stay inside words).
 _OPERATORS = frozenset({";", "&&", "||", "|"})

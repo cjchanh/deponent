@@ -24,9 +24,11 @@ as out of scope.
 SECURITY POSTURE: a privilege-boundary policy on a REFERENCE gate, not a hardened
 production sandbox. No key material. Fail-closed: an unrecognized program is denied;
 the full default deny floor (rm -rf, sudo, curl/wget/ssh, system paths, ~, ..) is
-retained. `make` is a generic shell-runner — included for build ergonomics, sound
-only because the jail confines its effects (no network, writes in-tree); deployments
-that disable the jail should drop it. Verification: test_profiles.py.
+    retained. `make` is a generic shell-runner — included for build ergonomics, sound
+    only because the jail confines its effects (no network, writes in-tree); deployments
+    that disable the jail should drop it. `cargo` and `git` stay on the unjailed
+    allowlist as the named build toolchain; in-tool hooks (`build.rs`, git hooks) are
+    residual gate-only risk, not a silent jail substitute. Verification: test_profiles.py.
 """
 from __future__ import annotations
 
@@ -39,6 +41,7 @@ from .gate import ALLOW_HEADS, DENY_SUBSTR, Gate
 BUILD_ALLOW_HEADS = ALLOW_HEADS | frozenset({
     "git", "cargo", "rustc", "typst", "make",
 })
+UNJAILED_DROP_HEADS = frozenset({"make"})
 
 # Irreversible / outward build operations — the boundary that stays CLOSED even
 # though the tool's head is allowlisted. Extends (never replaces) the default deny
@@ -59,7 +62,8 @@ def build_gate(repo_root: os.PathLike | str, *, unjailed: bool = False,
     actions (read, edit, compile, test, LOCAL commit) ALLOW; push/publish/install/
     force/history-rewrite/destructive BLOCK. Reads/writes/commands stay confined to
     repo_root; pair with a jailed Cell to confine in-tool effects."""
-    return Gate(repo_root, deny=BUILD_DENY_SUBSTR, allow_heads=BUILD_ALLOW_HEADS,
+    heads = BUILD_ALLOW_HEADS if not unjailed else BUILD_ALLOW_HEADS - UNJAILED_DROP_HEADS
+    return Gate(repo_root, deny=BUILD_DENY_SUBSTR, allow_heads=heads,
                 unjailed=unjailed, allow_unjailed_interpreters=allow_unjailed_interpreters)
 
 
@@ -79,4 +83,4 @@ def build_cell(repo_root: os.PathLike | str, **kwargs):
 
 
 __all__ = ["build_gate", "build_cell", "BUILD_ALLOW_HEADS", "BUILD_DENY_SUBSTR",
-           "BUILD_DENY_EXTRA"]
+           "BUILD_DENY_EXTRA", "UNJAILED_DROP_HEADS"]
