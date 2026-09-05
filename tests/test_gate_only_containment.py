@@ -704,6 +704,31 @@ class TestPrePlantedSymlinkContainment(unittest.TestCase):
             d = self.gate.evaluate("run_cmd", {"cmd": cmd})
             self.assertEqual((cmd, d.verdict), (cmd, "ALLOW"))
 
+    def test_escape_shapes_all_blocked_and_legit_names_allowed(self):
+        (self.work / "sub").mkdir()
+        (self.work / "sub" / "nested").symlink_to(self.outside / "secret.txt")
+        (self.work / "chain").symlink_to("hn")            # symlink -> symlink -> outside
+        (self.work / "dangling").symlink_to(self.outside / "missing")
+        blocked = ("cat chain", "cat dangling", "cat sub/nested", "wc chain",
+                   "head -n1 hn", "grep -f hn inside.txt", "diff hn inside.txt")
+        allowed = ("cat inlink", "grep secret inside.txt", "sort -o new.txt inside.txt",
+                   "cat -n inlink", "echo hello")
+        for cmd in blocked:
+            d = self.gate.evaluate("run_cmd", {"cmd": cmd})
+            self.assertEqual((cmd, d.verdict, d.blast_class),
+                             (cmd, "BLOCK", "arg-path-escape"))
+        for cmd in allowed:
+            self.assertEqual((cmd, self.gate.evaluate("run_cmd", {"cmd": cmd}).verdict),
+                             (cmd, "ALLOW"))
+
+    def test_a_non_path_word_that_collides_with_an_escaping_link_fails_closed(self):
+        """`echo hn` is harmless text, but `hn` names a link that leaves the
+        sandbox. The gate cannot tell a word from a filename, so it refuses:
+        deliberate, fail-closed, and the reason names the token."""
+        d = self.gate.evaluate("run_cmd", {"cmd": "echo hn"})
+        self.assertEqual((d.verdict, d.blast_class), ("BLOCK", "arg-path-escape"))
+        self.assertIn("hn", d.reason)
+
     def test_permissive_gate_cell_never_executes_the_outside_read(self):
         class Permissive(Gate):
             def evaluate(self, tool, params):  # noqa: ARG002
