@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import os
 
-from .gate import ALLOW_HEADS, DENY_SUBSTR, Gate
+from .gate import ALLOW_HEADS, DENY_SUBSTR, Gate, is_interpreter_head
 
 # Build-toolchain programs an agent may invoke for a real reversible/local build.
 # Curated to the CDS stack; a consumer widens it explicitly for their toolchain.
@@ -63,8 +63,12 @@ def build_gate(repo_root: os.PathLike | str, *, unjailed: bool = False,
     force/history-rewrite/destructive BLOCK. Reads/writes/commands stay confined to
     repo_root; pair with a jailed Cell to confine in-tool effects."""
     heads = BUILD_ALLOW_HEADS if not unjailed else BUILD_ALLOW_HEADS - UNJAILED_DROP_HEADS
+    unjailed_heads = frozenset()
+    if unjailed:
+        unjailed_heads = frozenset(h for h in heads if not is_interpreter_head(h))
     return Gate(repo_root, deny=BUILD_DENY_SUBSTR, allow_heads=heads,
-                unjailed=unjailed, allow_unjailed_interpreters=allow_unjailed_interpreters)
+                unjailed=unjailed, allow_unjailed_interpreters=allow_unjailed_interpreters,
+                allow_unjailed_heads=unjailed_heads)
 
 
 def build_cell(repo_root: os.PathLike | str, **kwargs):
@@ -79,6 +83,7 @@ def build_cell(repo_root: os.PathLike | str, **kwargs):
         unjailed=not kwargs.get("use_jail", True),
         allow_unjailed_interpreters=kwargs.get("allow_unjailed_interpreters", False),
     )
+    kwargs.setdefault("allow_unjailed_heads", gate.allow_unjailed_heads)
     return Cell(repo_root, gate=gate, **kwargs)
 
 

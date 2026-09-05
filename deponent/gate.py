@@ -65,9 +65,17 @@ ALLOW_HEADS = frozenset({
     "ls", "cat", "head", "tail", "pwd", "echo", "grep", "wc",
     "mkdir", "touch", "diff", "true", "sort", "uniq",
 })
-# Interpreter / launcher heads refused in gate-only (unjailed) mode unless explicitly
-# opted in. This is a denylist over heads an integrator might allow-list; a head not in
-# ALLOW_HEADS is already refused as program-not-allowlisted before this check runs.
+# Heads allowed in gate-only (unjailed) mode with no extra opt-in. This is an
+# allowlist: any other head is refused as head-unjailed unless named in
+# allow_unjailed_heads.
+GATE_ONLY_SAFE_HEADS = frozenset({
+    "ls", "cat", "head", "tail", "pwd", "echo", "grep", "wc",
+    "mkdir", "touch", "diff", "true", "sort", "uniq",
+})
+# Interpreter / launcher heads refused in gate-only mode unless
+# allow_unjailed_interpreters is set. An interpreter also needs membership in
+# allow_unjailed_heads (none of these are in GATE_ONLY_SAFE_HEADS). A head not
+# in ALLOW_HEADS is already refused as program-not-allowlisted before this check.
 INTERPRETER_HEADS = frozenset({
     "python", "python3", "pytest", "pypy", "pypy3", "uv", "uvx", "pip", "pip3",
     "node", "nodejs", "perl", "ruby", "bash", "sh", "zsh", "dash", "env", "xargs",
@@ -85,6 +93,29 @@ def is_interpreter_head(head: str) -> bool:
     Used only in gate-only mode. Comparison is case-insensitive (`Python3`, `PY.EXE`)."""
     base = os.path.basename(head or "").casefold()
     return base in INTERPRETER_HEADS or bool(_INTERPRETER_HEAD_RE.match(base))
+
+
+def gate_only_head_decision(
+    head: str,
+    *,
+    allow_unjailed_interpreters: bool,
+    allow_unjailed_heads: frozenset[str],
+) -> GateDecision | None:
+    base = os.path.basename(head or "").casefold()
+    if is_interpreter_head(head) and not allow_unjailed_interpreters:
+        return GateDecision(
+            "BLOCK", "interpreter-unjailed",
+            f"interpreter {head!r} refused in gate-only mode",
+        )
+    opted = frozenset(h.casefold() for h in allow_unjailed_heads)
+    if base not in GATE_ONLY_SAFE_HEADS and base not in opted:
+        return GateDecision(
+            "BLOCK", "head-unjailed",
+            f"head {head!r} refused in gate-only mode; pass allow_unjailed_heads to opt in",
+        )
+    return None
+
+
 # Segment operators after shlex tokenization (quoted copies stay inside words).
 _OPERATORS = frozenset({";", "&&", "||", "|"})
 _SUBST = ("$(", "`", "${")
@@ -137,7 +168,8 @@ class Gate:
                  reach: ReachOracle | None = None,
                  max_reach: int | None = None,
                  unjailed: bool = False,
-                 allow_unjailed_interpreters: bool = False):
+                 allow_unjailed_interpreters: bool = False,
+                 allow_unjailed_heads: frozenset[str] = frozenset()):
         self.sandbox = Path(sandbox).resolve()
         self.deny = tuple(deny)
         self.allow_heads = frozenset(allow_heads)
@@ -149,6 +181,7 @@ class Gate:
         self.max_reach = max_reach
         self.unjailed = bool(unjailed)
         self.allow_unjailed_interpreters = bool(allow_unjailed_interpreters)
+        self.allow_unjailed_heads = frozenset(allow_unjailed_heads)
 
     # ---- path containment ----
     def _in_sandbox(self, path: str) -> bool:
@@ -214,14 +247,16 @@ class Gate:
                     if not self._in_sandbox(t):
                         return GateDecision("BLOCK", "arg-path-escape", f"argument path escapes sandbox: {t!r}")
         if self.unjailed:
-            if not self.allow_unjailed_interpreters:
-                for toks in segments:
-                    head = os.path.basename(toks[0])
-                    if is_interpreter_head(head):
-                        return GateDecision(
-                            "BLOCK", "interpreter-unjailed",
-                            f"interpreter {head!r} refused in gate-only mode",
-                        )
+            for toks in segments:
+                if not toks:
+                    continue
+                blocked = gate_only_head_decision(
+                    toks[0],
+                    allow_unjailed_interpreters=self.allow_unjailed_interpreters,
+                    allow_unjailed_heads=self.allow_unjailed_heads,
+                )
+                if blocked is not None:
+                    return blocked
             if len(segments) > 1:
                 return GateDecision(
                     "BLOCK", "chain-unjailed",
@@ -253,4 +288,5 @@ class Gate:
 
 
 __all__ = ["Gate", "GateDecision", "DENY_SUBSTR", "ALLOW_HEADS",
-           "INTERPRETER_HEADS", "is_interpreter_head", "tokenize_command"]
+           "GATE_ONLY_SAFE_HEADS", "INTERPRETER_HEADS", "is_interpreter_head",
+           "gate_only_head_decision", "tokenize_command"]

@@ -26,7 +26,8 @@ class TestGateOnlyContainment(unittest.TestCase):
     def test_python3_script_blocked_unless_opted_in(self):
         d = self.unjailed.evaluate("run_cmd", {"cmd": "python3 script.py"})
         self.assertEqual(d.verdict, "BLOCK")
-        opted = Gate(self.work, unjailed=True, allow_unjailed_interpreters=True)
+        opted = Gate(self.work, unjailed=True, allow_unjailed_interpreters=True,
+                     allow_unjailed_heads=frozenset({"python3"}))
         self.assertEqual(
             opted.evaluate("run_cmd", {"cmd": "python3 script.py"}).verdict, "ALLOW"
         )
@@ -215,7 +216,8 @@ class TestGateOnlyContainment(unittest.TestCase):
         self.assertEqual(d.verdict, "ALLOW")
 
     def test_interpreter_opt_in_is_the_tighter_of_cell_and_gate(self):
-        permissive = Gate(self.work, unjailed=True, allow_unjailed_interpreters=True)
+        permissive = Gate(self.work, unjailed=True, allow_unjailed_interpreters=True,
+                          allow_unjailed_heads=frozenset({"python3"}))
         cell = Cell(self.work, ledger_path=self.work / "l.jsonl", use_jail=False, gate=permissive)
         self.assertFalse(cell.allow_unjailed_interpreters)
         with patch("deponent.cell.subprocess.run", side_effect=AssertionError("must not execute")):
@@ -292,6 +294,20 @@ class TestGateOnlyContainment(unittest.TestCase):
         self.assertIn("opt into gate-only", text)
         self.assertIn("defaults to `use_jail=True`", text)
         self.assertIn("both the Cell and its Gate", text)
+        self.assertGreaterEqual(text.lower().count("interpreters need both knobs"), 2)
+        self.assertGreaterEqual(
+            text.count("other heads need `allow_unjailed_heads` on both the Cell and its Gate"),
+            2,
+        )
+        self.assertGreaterEqual(text.count("the Cell heads kwarg alone does not opt in a foreign gate"), 2)
+        self.assertNotIn(
+            "other heads need `allow_unjailed_heads`, interpreters need `allow_unjailed_interpreters`",
+            text,
+        )
+        self.assertNotIn(
+            "other heads need `allow_unjailed_heads`. Interpreters need",
+            text,
+        )
         self.assertIn("ClassifyCell", text)
         self.assertIn("chain-unjailed", text)
 
@@ -306,6 +322,152 @@ class TestGateOnlyContainment(unittest.TestCase):
         self.assertEqual(
             jailed.evaluate("run_cmd", {"cmd": "echo a && echo b"}).verdict, "ALLOW"
         )
+
+    def test_default_unjailed_gate_blocks_non_safe_heads(self):
+        for cmd, extra in (
+            ("ruff check .", frozenset()),
+            ("cargo build", frozenset({"cargo"})),
+            ("git status", frozenset({"git"})),
+            ("make", frozenset({"make"})),
+        ):
+            g = Gate(self.work, unjailed=True, allow_heads=ALLOW_HEADS | extra)
+            d = g.evaluate("run_cmd", {"cmd": cmd})
+            self.assertEqual((cmd, d.verdict, d.blast_class),
+                             (cmd, "BLOCK", "head-unjailed"))
+            self.assertIn(cmd.split()[0], d.reason)
+            self.assertIn("allow_unjailed_heads", d.reason)
+
+    def test_allow_unjailed_heads_opts_in_named_head_only(self):
+        g = Gate(self.work, unjailed=True,
+                 allow_heads=ALLOW_HEADS | {"git", "cargo"},
+                 allow_unjailed_heads=frozenset({"git"}))
+        self.assertEqual(g.evaluate("run_cmd", {"cmd": "git status"}).verdict, "ALLOW")
+        d = g.evaluate("run_cmd", {"cmd": "cargo build"})
+        self.assertEqual((d.verdict, d.blast_class), ("BLOCK", "head-unjailed"))
+
+    def test_interpreter_in_allow_unjailed_heads_still_needs_flag(self):
+        g = Gate(self.work, unjailed=True, allow_unjailed_heads=frozenset({"python3"}))
+        d = g.evaluate("run_cmd", {"cmd": "python3 -c pass"})
+        self.assertEqual((d.verdict, d.blast_class), ("BLOCK", "interpreter-unjailed"))
+
+    def test_every_gate_only_safe_head_allows_unjailed(self):
+        from deponent.gate import GATE_ONLY_SAFE_HEADS
+        expected = frozenset({
+            "ls", "cat", "head", "tail", "pwd", "echo", "grep", "wc",
+            "mkdir", "touch", "diff", "true", "sort", "uniq",
+        })
+        self.assertEqual(GATE_ONLY_SAFE_HEADS, expected)
+        g = Gate(self.work, unjailed=True)
+        for head in sorted(GATE_ONLY_SAFE_HEADS):
+            d = g.evaluate("run_cmd", {"cmd": head})
+            self.assertEqual((head, d.verdict), (head, "ALLOW"))
+
+    def test_jail_mode_ruff_and_chain_still_allow(self):
+        jailed = Gate(self.work, unjailed=False)
+        self.assertEqual(jailed.evaluate("run_cmd", {"cmd": "ruff check ."}).verdict, "ALLOW")
+        self.assertEqual(jailed.evaluate("run_cmd", {"cmd": "echo a && echo b"}).verdict, "ALLOW")
+
+    def test_permissive_gate_cargo_is_head_unjailed_not_executed(self):
+        class Permissive(Gate):
+            def evaluate(self, tool, params):  # noqa: ARG002
+                return GateDecision("ALLOW", "bounded-local-exec", "permissive test gate")
+
+        cell = Cell(self.work, ledger_path=self.work / "l-cargo.jsonl", use_jail=False,
+                    gate=Permissive(self.work, unjailed=True))
+        with patch("deponent.cell.subprocess.run",
+                   side_effect=AssertionError("must not execute")):
+            r = cell.act("run_cmd", {"cmd": "cargo build"})
+        self.assertEqual(r.decision.verdict, "BLOCK")
+        self.assertEqual(r.decision.blast_class, "head-unjailed")
+        self.assertEqual(r.entry["verdict"], "BLOCK")
+        self.assertTrue(r.output.startswith("BLOCKED ["))
+
+    def test_interpreter_flag_alone_is_still_head_unjailed(self):
+        cell = Cell(self.work, ledger_path=self.work / "l-interp-only.jsonl",
+                    use_jail=False, allow_unjailed_interpreters=True)
+        with patch("deponent.cell.subprocess.run",
+                   side_effect=AssertionError("must not execute")):
+            r = cell.act("run_cmd", {"cmd": "python3 script.py"})
+        self.assertEqual((r.decision.verdict, r.decision.blast_class),
+                         ("BLOCK", "head-unjailed"))
+
+    def test_gate_only_head_decision_allow_returns_none(self):
+        from deponent.gate import gate_only_head_decision
+        self.assertIsNone(gate_only_head_decision(
+            "echo", allow_unjailed_interpreters=False, allow_unjailed_heads=frozenset(),
+        ))
+
+    def test_gate_only_head_decision_suite_does_not_lock_return_none_indent(self):
+        src = Path(__file__).read_text(encoding="utf-8")
+        needle = "inspect" + ".getsource"
+        self.assertEqual(src.count(needle), 0)
+
+    def test_gate_only_guard_docstring_names_head_unjailed(self):
+        doc = Cell._gate_only_guard.__doc__ or ""
+        self.assertIn("head-unjailed", doc)
+        self.assertIn("interpreter-unjailed", doc)
+        self.assertNotIn("no interpreter unless the gate opted in", doc)
+
+    def test_cell_allow_unjailed_heads_is_conjunction_with_gate(self):
+        foreign = Gate(self.work, unjailed=True,
+                       allow_heads=ALLOW_HEADS | {"git"},
+                       allow_unjailed_heads=frozenset({"git"}))
+        tight = Cell(self.work, ledger_path=self.work / "l-heads-tight.jsonl",
+                     use_jail=False, gate=foreign)
+        with patch("deponent.cell.subprocess.run",
+                   side_effect=AssertionError("must not execute")):
+            r = tight.act("run_cmd", {"cmd": "git status"})
+        self.assertEqual((r.decision.verdict, r.decision.blast_class),
+                         ("BLOCK", "head-unjailed"))
+        both = Cell(self.work, ledger_path=self.work / "l-heads-both.jsonl",
+                    use_jail=False, gate=foreign, allow_unjailed_heads=frozenset({"git"}))
+        captured = {}
+
+        def fake_run(*args, **kwargs):
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+
+            class R:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+
+            return R()
+
+        with patch("deponent.cell.subprocess.run", fake_run):
+            ok = both.act("run_cmd", {"cmd": "git status"})
+        self.assertEqual(ok.decision.verdict, "ALLOW")
+        self.assertEqual(captured["args"][0], ["git", "status"])
+        cell_only = Cell(self.work, ledger_path=self.work / "l-heads-cell.jsonl",
+                         use_jail=False, gate=Gate(self.work, unjailed=True,
+                                                  allow_heads=ALLOW_HEADS | {"git"}),
+                         allow_unjailed_heads=frozenset({"git"}))
+        with patch("deponent.cell.subprocess.run",
+                   side_effect=AssertionError("must not execute")):
+            r2 = cell_only.act("run_cmd", {"cmd": "git status"})
+        self.assertEqual((r2.decision.verdict, r2.decision.blast_class),
+                         ("BLOCK", "head-unjailed"))
+
+    def test_gate_only_safe_heads_comment_is_the_allowlist(self):
+        from deponent import gate as gate_mod
+        src = Path(gate_mod.__file__).read_text(encoding="utf-8")
+        self.assertNotIn(
+            "This is a denylist over heads an integrator might allow-list", src,
+        )
+        marker = "GATE_ONLY_SAFE_HEADS = frozenset({"
+        idx = src.index(marker)
+        preamble = src[max(0, idx - 280):idx]
+        self.assertIn("allowlist", preamble)
+
+    def test_build_cell_gate_only_git_allow_make_and_python_block(self):
+        from deponent.profiles import build_cell
+        cell = build_cell(self.work, ledger_path=self.work / "l-bc-heads.jsonl", use_jail=False)
+        self.assertEqual(cell.gate.evaluate("run_cmd", {"cmd": "git status"}).verdict, "ALLOW")
+        self.assertEqual(cell.act("run_cmd", {"cmd": "make"}).decision.verdict, "BLOCK")
+        with patch("deponent.cell.subprocess.run",
+                   side_effect=AssertionError("must not execute")):
+            r = cell.act("run_cmd", {"cmd": "python3 -c pass"})
+        self.assertEqual(r.decision.verdict, "BLOCK")
 
 
 if __name__ == "__main__":

@@ -64,6 +64,8 @@ class TestBuildProfile(unittest.TestCase):
         self.assertEqual(cell.gate.evaluate("run_cmd", {"cmd": "cargo test"}).verdict, "ALLOW")
         self.assertEqual(cell.gate.evaluate("run_cmd", {"cmd": "git commit -m x"}).verdict, "ALLOW")
         self.assertEqual(cell.gate.evaluate("run_cmd", {"cmd": "cargo publish"}).verdict, "BLOCK")
+        self.assertTrue({"git", "cargo"} <= cell.allow_unjailed_heads)
+        self.assertEqual(cell.allow_unjailed_heads, cell.gate.allow_unjailed_heads)
 
 
 if __name__ == "__main__":

@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .claims import ClaimSet, attest
-from .gate import Gate, GateDecision, tokenize_command, is_interpreter_head
+from .gate import Gate, GateDecision, gate_only_head_decision, tokenize_command
 from .jail import jail_available, run_jailed, select_backend
 from .ledger import Ledger
 
@@ -65,7 +65,8 @@ class Cell:
     def __init__(self, sandbox: Path | str, *, ledger_path: Path | str | None = None,
                  use_jail: bool = True, mem_cap_mb: int = 2048, wall_s: int = 90,
                  gate: Gate | None = None, reconcile: bool = True,
-                 allow_unjailed_interpreters: bool = False):
+                 allow_unjailed_interpreters: bool = False,
+                 allow_unjailed_heads: frozenset[str] = frozenset()):
         self.sandbox = Path(sandbox).resolve()
         self.sandbox.mkdir(parents=True, exist_ok=True)
         if gate is None:
@@ -73,6 +74,7 @@ class Cell:
                 self.sandbox,
                 unjailed=not use_jail,
                 allow_unjailed_interpreters=allow_unjailed_interpreters,
+                allow_unjailed_heads=allow_unjailed_heads,
             )
         elif not use_jail and not getattr(gate, "unjailed", False):
             # A caller-supplied gate built for jail mode would ALLOW interpreters and
@@ -84,6 +86,7 @@ class Cell:
         self.ledger = Ledger(ledger_path)
         self.use_jail = use_jail
         self.allow_unjailed_interpreters = allow_unjailed_interpreters
+        self.allow_unjailed_heads = frozenset(allow_unjailed_heads)
         self._last_backend_name = None
         self.mem_cap_mb = mem_cap_mb
         self.wall_s = wall_s
@@ -139,9 +142,11 @@ class Cell:
         return result
 
     def _gate_only_guard(self, tool: str, params: dict) -> GateDecision | None:
-        """Containment check for gate-only execution: exactly one parsable segment,
-        no interpreter unless the gate opted in. Returns a BLOCK decision to record,
-        or None when the command may run. Jail mode returns None (policy unchanged)."""
+        """Containment check for gate-only execution: exactly one parsable segment;
+        interpreters unless Cell and Gate both opted in (`interpreter-unjailed`);
+        non-safe heads unless both named them (`head-unjailed`). Returns a BLOCK
+        decision to record, or None when the command may run. Jail mode returns
+        None (policy unchanged)."""
         if self.use_jail or tool != "run_cmd":
             return None
         cmd = params.get("cmd", "") if isinstance(params, dict) else ""
@@ -158,11 +163,11 @@ class Cell:
         if not segments[0]:
             return GateDecision("BLOCK", "unparsable-command",
                                 "gate-only mode refused an empty command segment")
-        head = segments[0][0]
-        if is_interpreter_head(head) and not self._interpreters_opted_in():
-            return GateDecision("BLOCK", "interpreter-unjailed",
-                                f"interpreter {head!r} refused in gate-only mode")
-        return None
+        return gate_only_head_decision(
+            segments[0][0],
+            allow_unjailed_interpreters=self._interpreters_opted_in(),
+            allow_unjailed_heads=self._unjailed_heads(),
+        )
 
     def _interpreters_opted_in(self) -> bool:
         """Gate-only interpreters run only when BOTH the Cell and its gate opted in:
@@ -170,6 +175,17 @@ class Cell:
         loosen a Cell that did not ask for interpreters (and vice versa)."""
         return bool(self.allow_unjailed_interpreters) and bool(
             getattr(self.gate, "allow_unjailed_interpreters", False))
+
+    def _unjailed_heads(self) -> frozenset[str]:
+        """Gate-only extra heads run only when BOTH the Cell and its gate named them:
+        intersection, so a permissive foreign gate cannot loosen a Cell that did not
+        opt the head in (and vice versa). A foreign gate lacking the attribute
+        contributes nothing (fail-closed)."""
+        cell_heads = frozenset(h.casefold() for h in self.allow_unjailed_heads)
+        gate_heads = frozenset(
+            h.casefold() for h in getattr(self.gate, "allow_unjailed_heads", frozenset())
+        )
+        return cell_heads & gate_heads
 
     def _disclosure(self) -> dict:
         if not self.use_jail:
@@ -247,8 +263,13 @@ class Cell:
         argv = segments[0]
         if not argv:
             return "ERROR: gate-only mode refused an empty command segment."
-        if is_interpreter_head(argv[0]) and not self._interpreters_opted_in():
-            return f"ERROR: interpreter {argv[0]!r} refused in gate-only mode."
+        blocked = gate_only_head_decision(
+            argv[0],
+            allow_unjailed_interpreters=self._interpreters_opted_in(),
+            allow_unjailed_heads=self._unjailed_heads(),
+        )
+        if blocked is not None:
+            return f"ERROR: {blocked.reason}"
         r = subprocess.run(argv, shell=False, cwd=str(self.sandbox), env=env,
                            capture_output=True, text=True, timeout=self.wall_s)
         return f"exit={r.returncode}\n{(r.stdout + r.stderr)[-2800:]}"

@@ -49,7 +49,7 @@ from pathlib import Path
 from typing import Any
 
 from .cell import ActResult, Cell
-from .gate import GateDecision
+from .gate import ALLOW_HEADS, GateDecision
 
 # Blast classes that mean "an out-of-policy / dangerous attempt was contained".
 # (A BLOCK in one of these is the kernel doing its job; the action is dangerous-intent.)
@@ -181,6 +181,7 @@ class ClassifyCell(Cell):
         # reconcile/jail OFF: nothing executes, so there is nothing to reconcile or jail.
         kw.setdefault("use_jail", False)
         kw.setdefault("allow_unjailed_interpreters", True)
+        kw.setdefault("allow_unjailed_heads", frozenset(ALLOW_HEADS))
         kw["reconcile"] = False
         super().__init__(sandbox, **kw)
 
