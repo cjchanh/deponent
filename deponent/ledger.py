@@ -92,17 +92,19 @@ class Ledger:
 
     @classmethod
     def verify_entries(cls, entries: list[dict], genesis: str | None = None,
+                       expected_len: int | None = None, *,
                        expected_head: str | None = None,
-                       expected_length: int | None = None,
-                       expected_len: int | None = None) -> tuple[bool, str]:
+                       expected_length: int | None = None) -> tuple[bool, str]:
         """Recompute a chain from a list of stored entries (no live chain needed).
         Returns (ok, message). Any mutated/reordered entry -> (False, where).
 
-        `expected_length` (alias `expected_len`) and `expected_head`: when the
-        caller has an external anchor (a sealed receipt or `Ledger.head()`),
-        pass them to catch TRUNCATION and a full re-chain — a shorter or
-        rewritten chain re-links cleanly from genesis and would otherwise
-        verify as intact. Fail-closed: a mismatch is a break."""
+        Third positional is `expected_len` (legacy). `expected_head` and
+        `expected_length` are keyword-only so `verify_entries(entries, genesis, 3)`
+        still means length 3, not a head hash. `expected_length` aliases
+        `expected_len`. When the caller has an external anchor (a sealed receipt
+        or `Ledger.head()`), pass them to catch TRUNCATION and a full re-chain —
+        a shorter or rewritten chain re-links cleanly from genesis and would
+        otherwise verify as intact. Fail-closed: a mismatch is a break."""
         length = expected_length if expected_length is not None else expected_len
         if length is not None and len(entries) != length:
             return False, f"length mismatch: {len(entries)} entries, expected {length}"

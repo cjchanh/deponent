@@ -25,6 +25,7 @@ gate + ledger + jail wrapping is inherited unchanged.
 from __future__ import annotations
 
 import copy
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -260,20 +261,35 @@ class Cell:
             return self._run_cmd(**params)
         return f"ERROR: no implementation for tool {tool!r}"
 
-    def _write_file(self, path: str, content: str) -> str:
+    def _checked_sandbox_path(self, path: str) -> Path:
+        """Resolve once, refuse if that path leaves the sandbox, return the
+        same Path so the open cannot follow a symlink swapped after the check."""
+        if not isinstance(path, str) or "\x00" in path:
+            raise ValueError(f"path escapes sandbox: {path!r}")
+        try:
+            resolved = (self.sandbox / path).resolve()
+        except Exception as e:
+            raise ValueError(f"path escapes sandbox: {path!r}") from e
+        root, s = str(self.sandbox), str(resolved)
+        if not (s == root or s.startswith(root + os.sep)):
+            raise ValueError(f"path escapes sandbox: {path!r}")
         in_sandbox = getattr(self.gate, "_in_sandbox", lambda _p: False)
         if not in_sandbox(path):
             raise ValueError(f"path escapes sandbox: {path!r}")
-        p = self.sandbox / path
+        return resolved
+
+    def _write_file(self, path: str, content: str) -> str:
+        """Open the resolved path from the check, not the live sandbox/path join
+        (TOCTOU / direct call; act() already BLOCKs via _sandbox_path_guard)."""
+        p = self._checked_sandbox_path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content)
         return f"wrote {len(content)} bytes -> {path}"
 
     def _read_file(self, path: str) -> str:
-        in_sandbox = getattr(self.gate, "_in_sandbox", lambda _p: False)
-        if not in_sandbox(path):
-            raise ValueError(f"path escapes sandbox: {path!r}")
-        p = self.sandbox / path
+        """Open the resolved path from the check, not the live sandbox/path join
+        (TOCTOU / direct call; act() already BLOCKs via _sandbox_path_guard)."""
+        p = self._checked_sandbox_path(path)
         return p.read_text() if p.exists() else f"ERROR: {path} not found"
 
     def _run_cmd(self, cmd: str, env: dict | None = None) -> str:

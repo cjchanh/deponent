@@ -601,6 +601,70 @@ class TestGateOnlyContainment(unittest.TestCase):
         self.assertNotIn("pwned", secret.read_text())
         self.assertFalse(write.output.startswith("wrote "))
 
+    def test_write_read_file_direct_call_rechecks_resolved_parent(self):
+        outside = Path(tempfile.mkdtemp(prefix="goc-direct-"))
+        secret = outside / "x"
+        sentinel = "sentinel-direct"
+        secret.write_text(sentinel)
+        (self.work / "link").symlink_to(outside)
+        cell = Cell(self.work, ledger_path=self.work / "l-direct.jsonl", use_jail=False)
+        with self.assertRaises(ValueError) as ctx:
+            cell._write_file("link/x", "pwned")
+        self.assertIn("path escapes sandbox", str(ctx.exception))
+        self.assertEqual(secret.read_text(), sentinel)
+        with self.assertRaises(ValueError) as ctx_read:
+            cell._read_file("link/x")
+        self.assertIn("path escapes sandbox", str(ctx_read.exception))
+        self.assertEqual(secret.read_text(), sentinel)
+        write_doc = Cell._write_file.__doc__ or ""
+        read_doc = Cell._read_file.__doc__ or ""
+        self.assertIn("direct call", write_doc)
+        self.assertIn("direct call", read_doc)
+
+    def test_write_read_opens_resolved_path_not_live_symlink(self):
+        """S2: check sees sandbox/link -> inside; swap link to outside before
+        the open. Opening the unresolved join would write/read outside; opening
+        the resolved path from the check stays inside."""
+        inside = self.work / "inside"
+        inside.mkdir()
+        (inside / "x").write_text("inside-ok")
+        outside = Path(tempfile.mkdtemp(prefix="goc-toctou-"))
+        secret = outside / "x"
+        sentinel = "sentinel-toctou"
+        secret.write_text(sentinel)
+        link = self.work / "link"
+        link.symlink_to(inside)
+        cell = Cell(self.work, ledger_path=self.work / "l-toctou.jsonl", use_jail=False)
+        real = cell.gate._in_sandbox
+
+        def swap_after_check(path):
+            ok = real(path)
+            if ok:
+                link.unlink()
+                link.symlink_to(outside)
+            return ok
+
+        cell.gate._in_sandbox = swap_after_check
+        wrote = cell._write_file("link/x", "pwned")
+        self.assertTrue(wrote.startswith("wrote "))
+        self.assertEqual(secret.read_text(), sentinel)
+        self.assertEqual((inside / "x").read_text(), "pwned")
+        link.unlink()
+        link.symlink_to(inside)
+        got = cell._read_file("link/x")
+        self.assertEqual(got, "pwned")
+        self.assertEqual(secret.read_text(), sentinel)
+
+    def test_write_read_docstring_names_resolved_path_open(self):
+        write_doc = Cell._write_file.__doc__ or ""
+        read_doc = Cell._read_file.__doc__ or ""
+        helper_doc = Cell._checked_sandbox_path.__doc__ or ""
+        for doc in (write_doc, read_doc):
+            self.assertIn("resolved path", doc)
+            self.assertNotIn("resolved parent", doc)
+        self.assertIn("same Path", helper_doc)
+        self.assertIn("swapped", helper_doc)
+
 
 if __name__ == "__main__":
     unittest.main()

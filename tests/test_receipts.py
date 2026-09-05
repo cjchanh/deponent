@@ -98,11 +98,40 @@ class TestReceipts(unittest.TestCase):
         r = self._persist()
         p = self.root / RA.PRODUCER / f"{r['receipt_id']}.json"
         data = json.loads(p.read_text())
+        original_head = data["ledger_head"]
         data["chain"]["entries"] = data["chain"]["entries"][:1]
+        data["ledger_length"] = len(data["chain"]["entries"])
+        self.assertEqual(data["ledger_head"], original_head)
         canonical = {k: v for k, v in data.items() if k != "signature"}
         data["signature"] = RA._sha256(canonical)
         p.write_text(json.dumps(data))
         self.assertFalse(RA.verify(r["receipt_id"], root=self.root))
+
+    def test_re_signed_full_rewrite_matching_head_and_length_is_not_caught(self):
+        r = self._persist()
+        p = self.root / RA.PRODUCER / f"{r['receipt_id']}.json"
+        data = json.loads(p.read_text())
+        data["chain"]["entries"] = data["chain"]["entries"][:1]
+        data["ledger_length"] = 1
+        data["ledger_head"] = data["chain"]["entries"][0]["entry_hash"]
+        canonical = {k: v for k, v in data.items() if k != "signature"}
+        data["signature"] = RA._sha256(canonical)
+        p.write_text(json.dumps(data))
+        self.assertTrue(RA.verify(r["receipt_id"], root=self.root))
+
+    def test_verify_comment_does_not_overclaim_re_signed_truncation(self):
+        src = Path(RA.__file__).read_text(encoding="utf-8")
+        self.assertNotIn(
+            "caught even if the content-hash is",
+            src,
+        )
+        self.assertIn("cannot stop a full rewrite", src)
+
+    def test_module_docstring_names_ledger_head_and_length(self):
+        doc = RA.__doc__ or ""
+        self.assertIn("ledger_head", doc)
+        self.assertIn("ledger_length", doc)
+        self.assertIn("external anchor", doc)
 
 
 if __name__ == "__main__":

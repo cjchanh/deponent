@@ -10,7 +10,9 @@ downstream gate (CI, a release check, an operator dashboard) can ask one questio
 
 The verifier RECOMPUTES. It does not trust a stored boolean (there is no
 `return True` stub):
-  1. the hash chain is re-linked from genesis (any mutated entry breaks it), AND
+  1. the hash chain is re-linked from genesis (any mutated entry breaks it),
+     consulting published ledger_head / ledger_length when present so a
+     truncated or re-chained tail is caught against that external anchor, AND
   2. the receipt's own signature is recomputed over its canonical body (any
      mutated metadata breaks it).
 persist() runs that real verifier as a write-time round-trip and RAISES if it
@@ -141,9 +143,12 @@ def verify(receipt_id: str, *, producer: str = PRODUCER, root: Path = RECEIPTS_R
     if not isinstance(entries, list):
         return False
     # 1) hash-chain integrity (any mutated entry breaks the re-link).
-    # Consult the receipt's published head/length so truncation or a re-chain
-    # that still re-links from genesis is caught even if the content-hash is
-    # recomputed over the truncated body.
+    # Published ledger_head/ledger_length catch truncation or a re-chain that
+    # still re-links from genesis *when those fields still name the original
+    # chain*. Content-hash receipts cannot stop a full rewrite: truncate, set
+    # ledger_head and ledger_length to the short chain, recompute _sha256, and
+    # this verifier returns True. README is the honest claim — only an external
+    # copy of the original head catches that.
     ok, _ = Ledger.verify_entries(
         entries, chain.get("genesis"),
         expected_head=data.get("ledger_head"),

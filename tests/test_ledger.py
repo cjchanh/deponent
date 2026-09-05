@@ -76,6 +76,17 @@ class TestLedger(unittest.TestCase):
         self.assertFalse(ok, "expected_len must fail-closed on a short chain")
         self.assertIn("length mismatch", msg)
 
+    def test_verify_entries_third_positional_is_expected_len(self):
+        led = Ledger(self.log)
+        for cmd in ("ls", "echo a", "echo b"):
+            d = self.gate.evaluate("run_cmd", {"cmd": cmd})
+            led.record(agent="b", tool="run_cmd", params={"cmd": cmd}, decision=d, outcome="x")
+        ok, msg = Ledger.verify_entries(led.entries, Ledger.GENESIS, 3)
+        self.assertTrue(ok, msg)
+        ok_short, msg_short = Ledger.verify_entries(led.entries[:1], Ledger.GENESIS, 3)
+        self.assertFalse(ok_short)
+        self.assertIn("length mismatch", msg_short)
+
     def test_head_returns_last_hash_and_count(self):
         led = Ledger(self.log)
         self.assertEqual(led.head(), (Ledger.GENESIS, 0))
