@@ -1,6 +1,6 @@
 # Deponent
 
-[![deponent: conformant](docs/deponent-badge.svg)](#proven) &nbsp;·&nbsp; [![CI](https://github.com/cjchanh/deponent/actions/workflows/ci.yml/badge.svg)](https://github.com/cjchanh/deponent/actions/workflows/ci.yml) &nbsp;·&nbsp; **Apache-2.0** &nbsp;·&nbsp; verify the mark yourself: `python3 -m deponent.badge verify --kernel deponent`
+[![deponent: GAK self-evaluated](docs/deponent-badge.svg)](#proven) &nbsp;·&nbsp; [![CI](https://github.com/cjchanh/deponent/actions/workflows/ci.yml/badge.svg)](https://github.com/cjchanh/deponent/actions/workflows/ci.yml) &nbsp;·&nbsp; **Apache-2.0** &nbsp;·&nbsp; verify the mark yourself: `python3 -m deponent.badge verify --kernel deponent`
 
 **A governed sovereign agent kernel. It doesn't answer. It testifies.**
 
@@ -13,6 +13,8 @@ It is a small, model-agnostic governance layer that sits under any agent's tool 
 ```
 deny-by-default gate  ->  Seatbelt jail  ->  tamper-evident ledger  ->  verifiable receipt
 ```
+
+**Containment boundary:** the in-language jail is macOS Seatbelt only. On Linux and every other host Deponent runs gate-only (`use_jail=False`): the deny-by-default gate and the ledger still run, but there is no OS confinement, and an allow-listed interpreter (`python3 -c …`) can execute arbitrary code. Gate-only runs are policy evidence, not sandbox evidence.
 
 The core is pure Python and standard-library only: **zero third-party runtime dependencies.** Install it with `pip install deponent`.
 
@@ -125,7 +127,7 @@ Run `python3 -m pytest -q` to get the current count and host-specific skip set.
 `make self-gate-live` drives a real local build through the same gate, jail, and
 ledger path and emits receipts for inspection.
 
-**The `GAK-conformant` mark.** Passing the harness is earnable infrastructure, not a self-claim. `python3 -m deponent.badge certify --kernel deponent` emits a self-contained badge (the SVG above), a markdown snippet, and a JSON receipt carrying a sha256 `clauses_digest` over the per-clause results — so the badge maps to a specific, reproducible outcome. Re-derive it yourself, fail-closed:
+**The `GAK-conformant` mark.** The mark is **self-evaluated against GAK v0.x**: `deponent.badge certify` scores the kernel against a standard its own author wrote, and it stays self-evaluated until a second, independent implementer passes the same harness. `python3 -m deponent.badge certify --kernel deponent` emits a self-contained badge (the SVG above), a markdown snippet, and a JSON receipt carrying a sha256 `clauses_digest` over the per-clause results — so the badge maps to a specific, reproducible outcome. Re-derive it yourself, fail-closed:
 
 ```sh
 python3 -m deponent.badge verify --kernel deponent   # exit 0 only when the mark is earned
