@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-test_badge.py — the 'GAK-conformant' mark is EARNED, not asserted.
+test_badge.py — the 'GAK-conformant (self-assessed)' mark is EARNED, not asserted.
 
 The badge is worthless if it can be faked. These prove: the reference kernel earns
 it; a kernel that fails a clause gets a RED badge, never green; verify fails closed;
@@ -32,7 +32,10 @@ class _BrokenAdapter(DeponentAdapter):
 def test_reference_kernel_is_certified():
     cert = certify("deponent")
     assert cert.conformant is True
-    assert cert.mark == "GAK-conformant"
+    assert cert.mark == "GAK-conformant (self-assessed)"
+    assert cert.mark != "GAK-conformant"  # bare mark is reserved for independent runs
+    assert cert.self_assessed is True
+    assert cert.third_party_verified is False
     assert cert.counts["fail"] == 0
 
 
@@ -50,6 +53,8 @@ def test_non_conformant_kernel_gets_red_badge_not_green():
     cert = certify(_BrokenAdapter)
     assert cert.conformant is False
     assert cert.mark == "not-conformant"
+    assert cert.self_assessed is True
+    assert cert.third_party_verified is False
     svg = render_svg(cert)
     assert "not conformant" in svg
     assert badge._RED in svg and badge._GREEN not in svg
@@ -97,8 +102,17 @@ def test_cli_unknown_kernel_fails_closed():
 
 def test_certification_to_dict_is_json_serializable():
     d = json.loads(json.dumps(certify("deponent").to_dict()))
-    assert d["mark"] == "GAK-conformant"
+    assert d["mark"] == "GAK-conformant (self-assessed)"
+    assert d["self_assessed"] is True
+    assert d["third_party_verified"] is False
     assert "clauses_digest" in d and d["counts"]["fail"] == 0
+
+
+def test_render_text_carries_honesty_fields():
+    text = badge.render_text(certify("deponent"))
+    assert "GAK-conformant (self-assessed)" in text
+    assert "self_assessed" in text
+    assert "third_party_verified" in text
 
 
 def test_unknown_kernel_raises():

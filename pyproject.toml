@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "deponent"
-version = "0.1.1"
-description = "A fail-closed agent governance kernel with a deny-by-default gate, tamper-evident ledger, and verifiable receipts."
+version = "0.1.2"
+description = "A fail-closed agent kernel with a deny-by-default gate, tamper-evident ledger, and verifiable evidence records."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
@@ -33,10 +33,10 @@ Issues = "https://github.com/cjchanh/deponent/issues"
 Company = "https://centennialdefense.systems"
 
 [project.optional-dependencies]
-# Only the EXAMPLE governed-agent team needs a model runtime; the kernel does not.
+# Only the EXAMPLE agent team needs a model runtime; the kernel does not.
 ollama = []  # uses stdlib urllib against a local Ollama daemon — no package needed
 mlx = ["mlx-vlm>=0.1"]  # Apple Silicon, for the local North Mini Code reference backend
-# Operator-attestation overlay (operator_attest.py): ed25519 verification-only
+# Attestation overlay (operator_attest.py): ed25519 verification-only
 # integrity + identity cells. The CORE kernel stays keyless/zero-dep; this is the
 # separate, heavier security surface, opt-in only.
 attest = ["cryptography>=42"]

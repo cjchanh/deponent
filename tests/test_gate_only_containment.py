@@ -43,6 +43,26 @@ class TestGateOnlyContainment(unittest.TestCase):
         d = self.unjailed.evaluate("run_cmd", {"cmd": "grep 'a;b' somefile"})
         self.assertEqual(d.verdict, "ALLOW")
 
+    def test_python3_c_quoted_semicolon_is_not_a_chain(self):
+        # C2: a ';' inside a quoted -c string is data, not a chain. Jail mode
+        # ALLOWs the one-liner; gate-only still refuses the interpreter head
+        # (not chain-unjailed). Bare ';' remains a chain.
+        from deponent.gate import tokenize_command
+        self.assertEqual(
+            tokenize_command("python3 -c 'a; b'"),
+            [["python3", "-c", "a; b"]],
+        )
+        jailed = Gate(self.work, unjailed=False)
+        d = jailed.evaluate("run_cmd", {"cmd": "python3 -c 'a; b'"})
+        self.assertEqual(d.verdict, "ALLOW")
+        self.assertNotEqual(d.blast_class, "chain-unjailed")
+        unjailed = self.unjailed.evaluate("run_cmd", {"cmd": "python3 -c 'a; b'"})
+        self.assertEqual(unjailed.verdict, "BLOCK")
+        self.assertEqual(unjailed.blast_class, "interpreter-unjailed")
+        bare = self.unjailed.evaluate("run_cmd", {"cmd": "echo a; echo b"})
+        self.assertEqual(bare.verdict, "BLOCK")
+        self.assertEqual(bare.blast_class, "chain-unjailed")
+
     def test_gate_only_echo_runs_shell_false(self):
         captured = {}
 
@@ -294,12 +314,12 @@ class TestGateOnlyContainment(unittest.TestCase):
         self.assertIn("opt into gate-only", text)
         self.assertIn("defaults to `use_jail=True`", text)
         self.assertIn("both the Cell and its Gate", text)
-        self.assertGreaterEqual(text.lower().count("interpreters need both knobs"), 2)
-        self.assertGreaterEqual(
+        self.assertEqual(text.lower().count("interpreters need both knobs"), 1)
+        self.assertEqual(
             text.count("other heads need `allow_unjailed_heads` on both the Cell and its Gate"),
-            2,
+            1,
         )
-        self.assertGreaterEqual(text.count("the Cell heads kwarg alone does not opt in a foreign gate"), 2)
+        self.assertEqual(text.count("the Cell heads kwarg alone does not opt in a foreign gate"), 1)
         self.assertNotIn(
             "other heads need `allow_unjailed_heads`, interpreters need `allow_unjailed_interpreters`",
             text,

@@ -6,7 +6,7 @@ Deponent is a small, model-agnostic governance layer that sits under a local AI
 agent's tool calls and turns "trust me, it ran fine" into a record you can check.
 The five-pillar kernel (`deponent/{gate,jail,ledger,receipts,cell}.py` plus
 `__init__.py`) is standard-library only: **zero third-party runtime
-dependencies.** Version `0.1.1`. License: Apache-2.0. Additional public modules
+dependencies.** Version `0.1.2`. License: Apache-2.0. Additional public modules
 (claims, profiles, reach, reconcile, badge, conformance, playground, selfgate)
 sit on that core. `operator_attest.py` is an optional extra (`deponent[attest]`),
 not part of the keyless execution path. Do not trust a frozen line-count slogan;
@@ -295,7 +295,7 @@ fail-closed receipt round-trip.
 
 ## 8. Versioning and stability
 
-- **Version `0.1.1`** (`deponent/__init__.py`, `pyproject.toml`). Development
+- **Version `0.1.2`** (`deponent/__init__.py`, `pyproject.toml`). Development
   Status: 4 — Beta (`pyproject.toml`).
 - **`deponent-receipt/v1`** is the receipt schema (`receipts.py:40`). Receipt
   body fields, the canonical-body signature definition, and the genesis-anchored

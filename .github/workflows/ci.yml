@@ -41,7 +41,23 @@ jobs:
       - name: Run the suite
         run: python -m pytest -q
 
-      # The mark is earnable infrastructure, not a self-claim: CI re-derives it,
-      # fail-closed. A non-conformant kernel fails this step and the badge goes red.
-      - name: Self-verify the GAK-conformant mark
+      # C4: Linux skips Seatbelt tests; macOS must actually run them. Fail the
+      # macOS job if tests/test_jail.py reports any skip (pytest -rs + grep).
+      - name: macOS containment tests must not skip
+        if: matrix.os == 'macos-latest'
+        run: |
+          set -o pipefail
+          python -m pytest -rs --tb=no tests/test_jail.py | tee jail-macos.txt
+          if grep -E '^SKIPPED' jail-macos.txt; then
+            echo "C4 FAIL: containment tests skipped on macOS"
+            exit 1
+          fi
+          if ! grep -Eq '[0-9]+ passed' jail-macos.txt; then
+            echo "C4 FAIL: tests/test_jail.py reported no passes"
+            exit 1
+          fi
+
+      # The mark is earnable infrastructure, not third-party certification: CI
+      # re-derives it, fail-closed. A non-conformant kernel fails this step.
+      - name: Self-verify the GAK-conformant (self-assessed) mark
         run: python -m deponent.badge verify --kernel deponent

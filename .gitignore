@@ -24,5 +24,9 @@ runs/
 .tmp/
 .run_out
 
+# CI / runtime scratch (C4 writes jail-macos.txt; OpenCode writes .lineage-state/)
+jail-macos.txt
+.lineage-state/
+
 # OS
 .DS_Store

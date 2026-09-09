@@ -247,7 +247,7 @@ class TestPublicDistributionTruth(unittest.TestCase):
         pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
         version = re.search(r'^version = "([^"]+)"$', pyproject, re.MULTILINE)
         self.assertIsNotNone(version)
-        self.assertEqual(version.group(1), "0.1.1")
+        self.assertEqual(version.group(1), "0.1.2")
         self.assertEqual(deponent.__version__, version.group(1))
         self.assertIn('requires-python = ">=3.10"', pyproject)
         self.assertIn('license = "Apache-2.0"', pyproject)
@@ -269,7 +269,7 @@ class TestPublicDistributionTruth(unittest.TestCase):
 
     def test_spec_matches_released_version_and_public_api(self):
         spec = (REPO_ROOT / "SPEC.md").read_text(encoding="utf-8")
-        self.assertIn("`0.1.1`", spec)
+        self.assertIn("`0.1.2`", spec)
         self.assertNotIn("Version `0.1.0`", spec)
         self.assertNotIn("44 tests pass", spec)
         api_section = spec.split("**Public API**", 1)[1].split("**Stability", 1)[0]

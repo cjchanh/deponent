@@ -1,22 +1,24 @@
 # Deponent
 
-[![deponent: GAK self-evaluated](docs/deponent-badge.svg)](#proven) &nbsp;·&nbsp; [![CI](https://github.com/cjchanh/deponent/actions/workflows/ci.yml/badge.svg)](https://github.com/cjchanh/deponent/actions/workflows/ci.yml) &nbsp;·&nbsp; **Apache-2.0** &nbsp;·&nbsp; verify the mark yourself: `python3 -m deponent.badge verify --kernel deponent`
+[![deponent: GAK self-evaluated](docs/deponent-badge.svg)](#proven) &nbsp;·&nbsp; [![CI](https://github.com/cjchanh/deponent/actions/workflows/ci.yml/badge.svg)](https://github.com/cjchanh/deponent/actions/workflows/ci.yml) &nbsp;·&nbsp; **Apache-2.0** &nbsp;·&nbsp; check the mark yourself: `python3 -m deponent.badge verify --kernel deponent`
 
-**A governed sovereign agent kernel. It doesn't answer. It testifies.**
+A deny-by-default gate, macOS Seatbelt jail, and tamper-evident ledger for local agent tool calls. Standard-library only: **zero third-party runtime dependencies.**
 
-![Deponent blocks a destructive action and an unknown tool, then detects a forged audit record](docs/demo.gif)
+**Install:** `pip install deponent`
 
-A local AI agent runs on your machine. It edits files, runs commands, touches your system — and when it finishes, all you have is its word that it behaved, and a failed step reports success as readily as a real one. Deponent replaces the word with a record you can verify yourself.
+```python
+import tempfile
+from deponent import Cell
 
-It is a small, model-agnostic governance layer that sits under any agent's tool calls:
-
+cell = Cell(tempfile.mkdtemp(), use_jail=False)
+print(cell.act("write_file", {"path": "notes.txt", "content": "hello"}).output)
+print(cell.act("run_cmd", {"cmd": "rm -rf ./blocked-example"}).output)
+print(cell.act("exfiltrate", {"to": "evil.example"}).output)
 ```
-deny-by-default gate  ->  Seatbelt jail  ->  tamper-evident ledger  ->  verifiable receipt
-```
 
-**Containment boundary:** the live-verified jail is macOS Seatbelt (OS confinement) only. `Cell()` defaults to `use_jail=True`; when the jail is unavailable it fail-closes (records ALLOW, refuses execution) rather than silently switching to gate-only. On other hosts you supply confinement or opt into gate-only (`use_jail=False`): the deny-by-default gate and the ledger still run, but there is no OS confinement; argument paths are containment-checked whether spaced, glued to a flag (`-o/tmp/x`, `--output=/tmp/x`), dash-prefixed after `--` (`cat -- -secret`), or reached through a symlink that already exists inside the sandbox. In gate-only mode only a small safe set of heads runs by default; other heads need `allow_unjailed_heads` on both the Cell and its Gate (the Cell heads kwarg alone does not opt in a foreign gate). Interpreters need both knobs: membership in `allow_unjailed_heads` and `allow_unjailed_interpreters=True` on both the Cell and its Gate (the Cell interpreter kwarg alone does not opt in a foreign gate, and an interpreter listed only in `allow_unjailed_heads` is still refused), and gate-only commands run without a shell, one command at a time. Playground `ClassifyCell` is gate-only, so a chain such as `echo a && echo b` is `chain-unjailed` BLOCK (jail-mode would ALLOW). Gate-only runs are policy evidence, not sandbox evidence. The ledger is tamper-evident for edits, deletions and reordering; truncation and re-chaining are caught only against a head published outside the ledger (`Ledger.head()` / receipt `ledger_head`).
+**Refuses:** unknown tools, out-of-sandbox paths, destructive commands; in gate-only mode, interpreters and command chains unless you opt them in.
 
-The core is pure Python and standard-library only: **zero third-party runtime dependencies.** Install it with `pip install deponent`.
+Why it exists: [docs/WHY.md](docs/WHY.md). Limits: [docs/BOUNDARIES.md](docs/BOUNDARIES.md).
 
 ---
 
@@ -26,122 +28,74 @@ The core is pure Python and standard-library only: **zero third-party runtime de
 import tempfile
 from deponent import Cell
 
-cell = Cell(tempfile.mkdtemp(), use_jail=False)   # a sovereign, local sandbox
-                                                  # use_jail=True on macOS adds the Seatbelt jail
+cell = Cell(tempfile.mkdtemp(), use_jail=False)   # use_jail=True on macOS adds the Seatbelt jail
 print(cell.act("write_file", {"path": "notes.txt", "content": "hello"}).output)  # ALLOW
 print(cell.act("read_file",  {"path": "notes.txt"}).output)                      # ALLOW
 print(cell.act("run_cmd",    {"cmd": "rm -rf ./blocked-example"}).output)        # BLOCK (destructive)
 print(cell.act("exfiltrate", {"to": "evil.example"}).output)                     # BLOCK (deny-by-default)
 
-ok, msg = cell.verify()                           # recompute the chain — don't trust it
-print(f"testimony intact: {ok} — {msg}")
+ok, msg = cell.verify()
+print(f"chain intact: {ok} — {msg}")
 ```
 
-That is exactly `examples/minimal.py`. Run it (`python3 examples/minimal.py`) and it prints:
-
-```text
-wrote 5 bytes -> notes.txt
-hello
-BLOCKED [destructive-or-out-of-scope]: matched deny pattern 'rm -rf'
-BLOCKED [unknown-tool]: no policy for tool 'exfiltrate' (deny-by-default)
-
-testimony intact: True — chain intact (4 entries)
-  ALLOW write_file  [reversible-local-write]
-  ALLOW read_file   [reversible-local-read]
-  BLOCK run_cmd     [destructive-or-out-of-scope]
-  BLOCK exfiltrate  [unknown-tool]
-```
-
-No model needed for the demo. No network. No install required to run it from the repo.
+That is `examples/minimal.py`. Run it (`python3 examples/minimal.py`). No model. No network.
 
 ---
 
-## Why this exists
+## Containment
 
-Local agents are useful precisely because they act on your machine. That is also the risk: you are trusting they only did what they said they did.
-
-A self-report is not evidence. Every system has two surfaces — what it says about itself and what it actually did — and they drift. Agents are no exception: "tests pass," "done," "cleaned up" is a claim, not a fact.
-
-Deponent replaces the trust with a record. Every action an agent proposes is gated before it runs, jailed while it runs, and recorded after it runs into a hash-chained ledger you can re-verify from scratch. At the end you can **prove what happened** — or prove the record was altered. There is no third option.
-
----
-
-## How it works
-
-One object, `Cell`, is the whole architecture. Each action goes through `.act()`:
+**Containment boundary:** the live-verified jail is macOS Seatbelt (OS confinement) only. `Cell()` defaults to `use_jail=True`; when the jail is unavailable it fail-closes (records ALLOW, refuses execution) rather than silently switching to gate-only. On other hosts you supply confinement or opt into gate-only (`use_jail=False`): the deny-by-default gate and the ledger still run, but there is no OS confinement; argument paths are containment-checked whether spaced, glued to a flag (`-o/tmp/x`, `--output=/tmp/x`), dash-prefixed after `--` (`cat -- -secret`), or reached through a symlink that already exists inside the sandbox. In gate-only mode only a small safe set of heads runs by default; other heads need `allow_unjailed_heads` on both the Cell and its Gate (the Cell heads kwarg alone does not opt in a foreign gate). Interpreters need both knobs: membership in `allow_unjailed_heads` and `allow_unjailed_interpreters=True` on both the Cell and its Gate (the Cell interpreter kwarg alone does not opt in a foreign gate, and an interpreter listed only in `allow_unjailed_heads` is still refused), and gate-only commands run without a shell, one command at a time. Playground `ClassifyCell` is gate-only, so a chain such as `echo a && echo b` is `chain-unjailed` BLOCK (jail-mode would ALLOW). Gate-only runs are policy evidence, not sandbox evidence. The ledger is tamper-evident for edits, deletions and reordering; truncation and re-chaining are caught only against a head published outside the ledger (`Ledger.head()` / receipt `ledger_head`).
 
 ```
-agent proposes an action
-        │
-        ▼
-   ┌─────────┐   deny-by-default. unknown tool / path escape /
-   │  GATE   │   destructive cmd / network / privilege  ->  BLOCK
-   └────┬────┘
-        │ ALLOW
-        ▼
-   ┌─────────┐   macOS Seatbelt: no network, writes confined to
-   │  JAIL   │   the sandbox, CPU + memory + wall-clock bounded
-   └────┬────┘
-        │ output
-        ▼
-   ┌─────────┐   append-only sha256 hash chain. every decision +
-   │ LEDGER  │   a hash of its outcome, link-locked to the prior
-   └────┬────┘
-        │
-        ▼
-   ┌─────────┐   recompute the chain AND the content hash.
-   │ RECEIPT │   verify() is real — there is no return-True stub
-   └─────────┘
+deny-by-default gate  ->  Seatbelt jail  ->  tamper-evident ledger  ->  verifiable evidence record
 ```
 
-- **The Gate** governs the shell + path surface — which programs may run, which paths may be touched, whether a command chains or substitutes its way out of policy. Deny-by-default and fail-closed: anything it cannot classify is blocked. It can also gate on real blast radius: wire a `ReachOracle` (opt-in) and a write is gated on its **reverse-dependency closure** — what the action can reach, not just what string it contains. The default policy is the substring + path gate; the reach closure is opt-in.
-- **The Jail** closes the gap the gate cannot see: the *code inside* an allowed command. On macOS the native primitive is `sandbox-exec` (Seatbelt) — no Docker assumed.
-- **The Ledger** is the testimony: an append-only, hash-chained record where mutating or reordering any past entry breaks the re-link.
-- **The Receipt** is the closure artifact. Its verifier recomputes the chain from genesis *and* recomputes the receipt's own content hash. `persist()` runs that verifier as a write-time round-trip and **raises on failure**, so a corrupt write can never be reported as success.
+- **The Gate** checks which programs may run, which paths may be touched, and whether a command chains or substitutes its way out of policy. Deny-by-default and fail-closed. Optional `ReachOracle`: a write can be checked on its reverse-dependency closure.
+- **The Jail** confines the code inside an allowed command. On macOS the native primitive is `sandbox-exec` (Seatbelt).
+- **The Ledger** is an append-only sha256 hash chain. Mutating or reordering any past entry breaks the re-link.
+- **The evidence record** (`deponent.receipts`) recomputes the chain from genesis *and* recomputes its own content hash. `persist()` runs that check as a write-time round-trip and **raises on failure**.
 
-The Cell is the keystone, and it composes at every scale: one tool call, one agent, or a whole team sharing one ledger. The kernel does not change when the model does. Subclass `Cell` and override `_execute` to govern your own tool surface — the gate + jail + ledger wrapping is inherited unchanged.
+Subclass `Cell` and override `_execute` to wrap your own tool surface — gate + jail + ledger wrapping is inherited.
 
 ---
 
 ## What it does NOT do
 
-This section is the trust anchor. Read it before you build on this.
+Full text: [docs/BOUNDARIES.md](docs/BOUNDARIES.md).
 
-- **It is a reference governance primitive, not a hardened production sandbox.** It is the smallest honest version of the idea — clear enough to read end-to-end, strong enough to be useful, not a certified security product.
-- **The live-verified jail is macOS Seatbelt (OS confinement).** `jail.py` also contains a **DRAFT** Docker backend; do not read DRAFT as proven. On other hosts you supply confinement or opt into gate-only (`use_jail=False`). In gate-only mode only a small safe set of heads runs by default; other heads need `allow_unjailed_heads` on both the Cell and its Gate (the Cell heads kwarg alone does not opt in a foreign gate). Interpreters need both knobs: membership in `allow_unjailed_heads` and `allow_unjailed_interpreters=True` on both the Cell and its Gate (the Cell interpreter kwarg alone does not opt in a foreign gate, and an interpreter listed only in `allow_unjailed_heads` is still refused), and gate-only commands run without a shell, one command at a time. Playground `ClassifyCell` is gate-only, so a chain such as `echo a && echo b` is `chain-unjailed` BLOCK (jail-mode would ALLOW). The gate and ledger are platform-independent.
-- **It is tamper-EVIDENT, not tamper-PROOF.** The ledger core is a **keyless sha256 hash chain** — nothing in the agent's execution path is signed. It proves *internal consistency* — that no entry was altered or reordered — **not authorship.** An attacker who can rewrite the entire file from genesis can produce a consistent chain. The core ledger is **not cryptographic signatures.** There is an **optional, verification-only ed25519 operator-attestation overlay** (`operator_attest.py`, opt-in via `deponent[attest]`) that verifies an operator's out-of-band signature over a run; it signs nothing the agent does. The core stays keyless on purpose — asymmetric signing in the execution path is a deliberate non-goal.
-- **The default gate policy is a sane coding-agent sandbox, not a universal security policy.** It is overridable per instance (`deny=`, `allow_heads=`). Tune it for your tool surface.
-
-State the limits, or the guarantees mean nothing.
+- **Reference kernel, not a certified security product.**
+- **Live-verified jail is macOS Seatbelt only.** Docker in `jail.py` is **DRAFT**.
+- **Tamper-evident, not tamper-proof.** Keyless sha256 chain; optional verification-only ed25519 overlay (`operator_attest.py`, extra `deponent[attest]`) checks a maintainer's out-of-band signature over a run and signs nothing the agent does.
+- **Default policy is a coding-agent sandbox.** Override with `deny=` / `allow_heads=`.
 
 ---
 
 ## Proven
 
 The suite exercises the gate, live macOS Seatbelt confinement, ledger integrity,
-receipts, reconciliation, claims, build profiles, the public playground, and the
+evidence records, reconciliation, claims, build profiles, the public playground, and the
 conformance harness. Platform- or optional-capability checks skip explicitly when
 their real backend is unavailable; they are never replaced with a passing mock.
 
 Run `python3 -m pytest -q` to get the current count and host-specific skip set.
 `make self-gate-live` drives a real local build through the same gate, jail, and
-ledger path and emits receipts for inspection.
+ledger path and emits evidence records for inspection.
 
-**The `GAK-conformant` mark (self-evaluated).** The mark is **self-evaluated against GAK v0.x**: `deponent.badge certify` scores the kernel against a standard its own author wrote, and it stays self-evaluated until a second, independent implementer passes the same harness. `python3 -m deponent.badge certify --kernel deponent` emits a self-contained badge (the SVG above), a markdown snippet, and a JSON receipt carrying a sha256 `clauses_digest` over the per-clause results — so the badge maps to a specific, reproducible outcome. Re-derive it yourself, fail-closed:
+**The `GAK-conformant (self-assessed)` mark.** The mark is **self-assessed against GAK v0.x**: `deponent.badge certify` scores the kernel against a standard its own author wrote, and it stays self-assessed until a second, independent implementer passes the same harness. The certification JSON carries `self_assessed: true` and `third_party_verified: false`; the bare mark `GAK-conformant` is reserved for an independent run. `python3 -m deponent.badge certify --kernel deponent` emits a self-contained badge (the SVG above), a markdown snippet, and a JSON record carrying a sha256 `clauses_digest` over the per-clause results. Re-derive it yourself, fail-closed:
 
 ```sh
 python3 -m deponent.badge verify --kernel deponent   # exit 0 only when the mark is earned
 ```
 
-Any kernel that implements the small adapter and passes the clause set earns the same mark; a kernel that fails gets a red "not conformant" badge and a non-zero exit. The badge is generated locally — no shields.io, no network — because a sovereignty product shouldn't phone home to prove it passed.
+Any kernel that implements the small adapter and passes the clause set earns the same mark; a kernel that fails gets a red "not conformant" badge and a non-zero exit. The badge is generated locally — no shields.io, no network.
 
-**Seatbelt escape-proofs — two kinds, kept separate so the claim is exactly as strong as the evidence.** (1) **Committed live canaries** (`canaries/CANARIES.md`, J1–J8): network exfil, raw-socket egress, writes outside the sandbox, child-process escape, memory-bomb, and wall-clock runaway — each a real test run against the live macOS sandbox, 0 through; if a canary stops holding, the suite goes red. (2) **Manual development red-team** — during development I hand-ran Seatbelt bypasses (`osascript 'do shell script'`, `launchctl submit`, loopback `/dev/tcp`, DNS, symlink/hardlink/rename writes-out), all blocked; these **shaped the gate denylist and the Seatbelt profile but are not committed tests** — take them as reported, not reproducible from the repo.
+**Seatbelt escape-proofs — two kinds, kept separate so the claim is exactly as strong as the evidence.** (1) **Committed live canaries** (`canaries/CANARIES.md`, J1–J8): network exfil, raw-socket egress, writes outside the sandbox, child-process escape, memory-bomb, and wall-clock runaway — each a real test run against the live macOS sandbox, 0 through; if a canary stops holding, the suite goes red. (2) **Manual development review** — during development Seatbelt bypasses (`osascript 'do shell script'`, `launchctl submit`, loopback `/dev/tcp`, DNS, symlink/hardlink/rename writes-out) were hand-run and blocked; these **shaped the gate denylist and the Seatbelt profile but are not committed tests** — take them as reported, not reproducible from the repo.
 
-**Recompute-not-trust receipts:** the verifier does not read a stored boolean. It re-links the chain from genesis and recomputes the receipt's content hash over its canonical body. `persist()` runs that verifier on write and raises on failure. This is the project's core rule made mechanical: *self-reported health is never the evidence.*
+**Recompute-not-trust evidence records:** the verifier does not read a stored boolean. It re-links the chain from genesis and recomputes the record's content hash over its canonical body. `persist()` runs that verifier on write and raises on failure. Self-reported health is never the evidence.
 
 ---
 
-## Governed agent team example
+## Example agent team
 
 `examples/governed_team.py` shows an Architect, a gated Builder, and an advisory
 Reviewer sharing one ledger. The example is model-agnostic through
@@ -167,7 +121,7 @@ git clone <repo> deponent && cd deponent
 python3 -m pip install -e .        # or just run from the repo — the core needs no install
 
 make test                          # current suite; real-backend skips are host-dependent
-make demo                          # the minimal testify demo, no model needed
+make demo                          # the minimal demo, no model needed
 ```
 
 The kernel has **zero third-party dependencies.** Only the example team needs a model runtime; the kernel does not.
@@ -176,11 +130,11 @@ The kernel has **zero third-party dependencies.** Only the example team needs a 
 
 ```bash
 docker build -t deponent .
-docker run --rm deponent             # scores the kernel against its own GAK standard -> CONFORMANT
+docker run --rm deponent             # scores the kernel against its own GAK standard -> GAK-conformant (self-assessed)
 docker run --rm deponent make test   # run the suite in-container
 ```
 
-The gate, ledger, and receipts are platform-independent. Live-verified OS confinement is macOS Seatbelt. The Docker backend in `jail.py` is **DRAFT**; `tests/test_jail_backends.py` gates those tests. Do not read DRAFT as proven.
+The gate, ledger, and evidence records are platform-independent. Live-verified OS confinement is macOS Seatbelt. The Docker backend in `jail.py` is **DRAFT**; `tests/test_jail_backends.py` gates those tests. Do not read DRAFT as proven.
 
 ---
 

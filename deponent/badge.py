@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """
-badge.py — the "GAK-conformant" mark, EARNED by passing the harness.
+badge.py — the "GAK-conformant (self-assessed)" mark, EARNED by passing the harness.
 
 A category is owned when others can EARN a mark in it. This turns the GAK
 conformance harness (conformance.py) into infrastructure: any kernel that passes
-the clause set gets a verifiable "GAK-conformant" badge (SVG + a markdown
-snippet) and a fail-closed verify CLI that re-derives the result. The badge is the
-category-ownership lever. The mark it grants is "GAK-conformant" — the vendor-neutral
-GAK conformance standard (`gak-conformance/v1`), EARNED by passing the harness. Per
-TRADEMARKS.md the mark is a property of the standard, NOT a use of the "Deponent"
-name: any kernel that passes the clause set may claim it, including kernels that are
-not Deponent and not from CDS.
+the clause set gets a verifiable "GAK-conformant (self-assessed)" badge (SVG + a
+markdown snippet) and a fail-closed verify CLI that re-derives the result. The
+badge is the category-ownership lever. The mark it grants is
+"GAK-conformant (self-assessed)" — the vendor-neutral GAK conformance standard
+(`gak-conformance/v1`), EARNED by passing the harness, and self-assessed because
+this emitter and the reference kernel share an author. The bare mark
+"GAK-conformant" is reserved for a run by a party independent of the kernel's
+author. Per TRADEMARKS.md the mark is a property of the standard, NOT a use of
+the "Deponent" name: any kernel that passes the clause set may claim it,
+including kernels that are not Deponent and not from CDS.
 
 HONESTY (the badge is only as good as the adapter behind it):
   - The green "conformant" badge is emitted ONLY when run_conformance actually
@@ -46,6 +49,8 @@ from pathlib import Path
 
 HARNESS_VERSION = "gak-conformance/v1"
 SCHEMA_VERSION = "gak-certification/v1"
+SELF_ASSESSED_MARK = "GAK-conformant (self-assessed)"
+NOT_CONFORMANT_MARK = "not-conformant"
 
 _GREEN = "#3fb950"
 _RED = "#e5534b"
@@ -67,7 +72,16 @@ class Certification:
 
     @property
     def mark(self) -> str:
-        return "GAK-conformant" if self.conformant else "not-conformant"
+        return SELF_ASSESSED_MARK if self.conformant else NOT_CONFORMANT_MARK
+
+    @property
+    def self_assessed(self) -> bool:
+        # This emitter cannot determine independence; GAK requires true then.
+        return True
+
+    @property
+    def third_party_verified(self) -> bool:
+        return False
 
     @property
     def message(self) -> str:
@@ -81,6 +95,8 @@ class Certification:
             "profile": self.profile,
             "conformant": self.conformant,
             "mark": self.mark,
+            "self_assessed": self.self_assessed,
+            "third_party_verified": self.third_party_verified,
             "counts": self.counts,
             "clauses_digest": self.clauses_digest,
             "clauses": [{"id": cid, "status": st} for cid, st in self.clauses],
@@ -117,7 +133,7 @@ def certify(kernel="deponent") -> Certification:
 
 def _verdict_line(cert: Certification) -> tuple[bool, str]:
     if cert.conformant:
-        return True, (f"{cert.kernel} is GAK-conformant "
+        return True, (f"{cert.kernel} is {cert.mark} "
                       f"({cert.counts['pass']} pass / {cert.counts['na']} na, {cert.profile}); "
                       f"digest {cert.clauses_digest[:12]}")
     return False, (f"{cert.kernel} is NOT conformant "
@@ -198,6 +214,8 @@ def render_text(cert: Certification) -> str:
     lines = [f"DEPONENT CERTIFICATION — {cert.kernel} ({cert.profile}): {head}",
              "=" * 60,
              f"  mark      : {cert.mark}",
+             f"  self_assessed: {str(cert.self_assessed).lower()}",
+             f"  third_party_verified: {str(cert.third_party_verified).lower()}",
              f"  conformant: {cert.conformant}  "
              f"[{cert.counts['pass']} pass / {cert.counts['fail']} fail / {cert.counts['na']} na]",
              f"  digest    : {cert.clauses_digest}",
@@ -212,7 +230,7 @@ def main(argv: list[str] | None = None) -> int:
     import argparse
     ap = argparse.ArgumentParser(
         prog="deponent.badge",
-        description="Earn (or verify) the 'GAK-conformant' mark by passing the GAK harness.")
+        description="Earn (or verify) the 'GAK-conformant (self-assessed)' mark by passing the GAK harness.")
     ap.add_argument("mode", nargs="?", default="certify", choices=["certify", "verify"],
                     help="certify (emit badge/markdown) or verify (fail-closed exit code)")
     ap.add_argument("--kernel", default="deponent", help="kernel adapter to certify")
@@ -257,7 +275,8 @@ def main(argv: list[str] | None = None) -> int:
 __all__ = [
     "Certification", "certify", "verify",
     "render_svg", "render_markdown", "render_text",
-    "HARNESS_VERSION", "SCHEMA_VERSION", "main",
+    "HARNESS_VERSION", "SCHEMA_VERSION",
+    "SELF_ASSESSED_MARK", "NOT_CONFORMANT_MARK", "main",
 ]
 
 

@@ -1,28 +1,9 @@
-"""
-Deponent — a governed sovereign agent kernel.
+"""Deponent — deny-by-default gate, jail, and tamper-evident ledger for agent tool calls.
 
-Make any local AI agent testify. A small, model-agnostic governance layer that
-sits under an agent's tool calls and turns "trust me, it ran fine" into a
-verifiable record:
-
-    deny-by-default Gate  ->  Seatbelt jail  ->  tamper-evident Ledger  ->  Receipt
-
-It does not answer. It testifies.
-
-Quickstart
-----------
     import tempfile
     from deponent import Cell
-
-    cell = Cell(tempfile.mkdtemp(), use_jail=False)  # gate + ledger; Seatbelt jail is opt-in
-    print(cell.act("run_cmd", {"cmd": "rm -rf ./blocked-example"}).output)  # BLOCKED
-    print(cell.act("write_file", {"path": "hi.txt", "content": "ok"}).output)  # wrote 2 bytes
-    ok, msg = cell.verify()                    # prove the testimony intact
-    print(ok, msg)                             # True  chain intact (2 entries)
-
-The pieces compose at every scale: one tool call, one agent, a whole team. See
-examples/ for a model-agnostic governed agent team (North Mini Code, Ollama, or
-any backend you plug in).
+    cell = Cell(tempfile.mkdtemp(), use_jail=False)
+    print(cell.act("run_cmd", {"cmd": "rm -rf ./blocked-example"}).output)
 """
 
 from __future__ import annotations
@@ -35,7 +16,7 @@ from .ledger import Ledger
 from .profiles import build_cell, build_gate
 from .receipts import persist, verify, write_operator_receipt
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 __all__ = [
     "Cell",
