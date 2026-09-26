@@ -135,7 +135,18 @@ def attest(results: Sequence, *, ledger=None, jailed: bool = False,
                             "no ledger supplied; chain integrity was not checked."))
     else:
         ok, msg = ledger.verify()
-        claims.append(Claim("C-CHAIN-INTACT", s_chain, "ATTESTED" if ok else "REFUTED", msg))
+        if not ok:
+            claims.append(Claim("C-CHAIN-INTACT", s_chain, "REFUTED", msg))
+        elif ledger.entries:
+            claims.append(Claim("C-CHAIN-INTACT", s_chain, "ATTESTED", msg))
+        elif n == 0:  # an empty chain proves nothing: abstain, never vacuously attest
+            claims.append(Claim("C-CHAIN-INTACT", s_chain, "ABSTAIN",
+                                "no actions were recorded in this run; the chain is empty, "
+                                "nothing to verify."))
+        else:
+            claims.append(Claim("C-CHAIN-INTACT", s_chain, "REFUTED",
+                                f"{n} action(s) in this run but the ledger holds no entries: "
+                                "the testimony is missing."))
 
     # C-BLOCKS-RECORDED — every denial is accounted for.
     s_blocks = "Every denied action was recorded with a named blast class and reason."

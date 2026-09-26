@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from deponent import Cell
+from deponent import Cell, Ledger
 
 
 class TestCell(unittest.TestCase):
@@ -76,6 +76,16 @@ class TestCell(unittest.TestCase):
         self.assertIn("ERROR executing write_file", r.output)
         # the loop survived and recorded the attempt
         self.assertEqual(len(self.cell.ledger.entries), 1)
+
+    def test_rerun_over_an_existing_ledger_file_is_refused_not_forked(self):
+        self.cell.act("write_file", {"path": "a.txt", "content": "1"})
+        ledger_file = self.work / "ledger.jsonl"
+        before = ledger_file.read_bytes()
+        with self.assertRaises(FileExistsError):
+            Cell(self.work, ledger_path=ledger_file, use_jail=False)
+        self.assertEqual(ledger_file.read_bytes(), before)
+        ok, msg = Ledger.load(ledger_file).verify()
+        self.assertTrue(ok, msg)
 
 
 if __name__ == "__main__":

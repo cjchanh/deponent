@@ -33,19 +33,19 @@ irreversible or out-of-bounds.
 Two halves enforce this:
 
 - **No silent execution.** Every action routes through one `Cell.act()` call
-  (`cell.py:84`). It is gated *before* it runs and recorded *after*. A BLOCK is
+  (`cell.py:110`). It is gated *before* it runs and recorded *after*. A BLOCK is
   recorded too — the testimony includes what was refused (`test_cell.py:26-32`,
-  `cell.py:87-92`).
+  `cell.py:124-130`).
 - **No self-reported closure.** Closure is not the agent's claim. It is
-  `Ledger.verify()` recomputing the hash chain (`ledger.py:102-104`) and, at write
+  `Ledger.verify()` recomputing the hash chain (`ledger.py:231-238,262-265`) and, at write
   time, the receipt verifier recomputing both the chain and the receipt signature
-  (`receipts.py:121-142`). Both *recompute*; neither trusts a stored boolean. This is
+  (`receipts.py:122-124,131-162`). Both *recompute*; neither trusts a stored boolean. This is
   the rule the whole project is built on: **self-reported health is never the
-  evidence** (`receipts.py:18`).
+  evidence** (`receipts.py:20`).
 
 The reference agent team (`examples/governed_team.py`) shows the invariant in
 practice: when the Builder model says "done," the harness re-runs pytest
-out-of-band and pushes back if it isn't actually green (`governed_team.py:119-143`);
+out-of-band and pushes back if it isn't actually green (`governed_team.py:119-144`);
 certification anchors only on deterministic signals — out-of-band test pass, intact
 chain, rogue action proven blocked — with the LLM Reviewer explicitly **advisory,
 recorded but not gating** (`governed_team.py:277-279`).
@@ -56,9 +56,9 @@ recorded but not gating** (`governed_team.py:277-279`).
 
 | Pillar | Where | What it means here |
 |---|---|---|
-| **Deny-by-default** | `gate.py:134-135` | An unrecognized tool returns `BLOCK / unknown-tool`. Nothing is permitted unless a policy branch explicitly allows it (`test_gate.py:63`, `test_cell.py:55`). |
-| **Fail-closed** | `gate.py`, `jail.py:108-109`, `cell.py:158-159` | Unknown tool, unparsable command, path escape → BLOCK. When no confinement backend is available, `run_cmd` **refuses to execute un-jailed** rather than degrade to a bare run. |
-| **Dry-run / gate-before-destructive** | `cell.py:84-92` | The gate classifies blast radius *before* any execution. Destructive/irreversible signatures (`rm -rf`, `mkfs`, `dd`, `sudo`, …) never reach the shell (`gate.py:52-61`, `test_gate.py:34`). |
+| **Deny-by-default** | `gate.py:275-276` | An unrecognized tool returns `BLOCK / unknown-tool`. Nothing is permitted unless a policy branch explicitly allows it (`test_gate.py:63`, `test_cell.py:55`). |
+| **Fail-closed** | `gate.py`, `jail.py:108-109`, `cell.py:299-300` | Unknown tool, unparsable command, path escape → BLOCK. When no confinement backend is available, `run_cmd` **refuses to execute un-jailed** rather than degrade to a bare run. |
+| **Dry-run / gate-before-destructive** | `cell.py:113-130` | The gate classifies blast radius *before* any execution. Destructive/irreversible signatures (`rm -rf`, `mkfs`, `dd`, `sudo`, …) never reach the shell (`gate.py:52-61`, `test_gate.py:34`). |
 | **Independent audit** | `ledger.py` | Every decision + a hash of its outcome is appended to a tamper-evident chain, verifiable after the fact by re-linking from genesis — a path independent of the agent's own status signal. |
 | **Bounded execution** | `jail.py` | Live-verified Seatbelt jail (macOS): no network, writes confined to the sandbox, CPU/file-size rlimits, plus RSS-polling and wall-clock watchdogs that kill runaways (`jail.py:118-147`). A Docker backend exists in the same module and is marked **DRAFT**, not live-verified. |
 
@@ -68,29 +68,29 @@ The gate governs the **shell + path surface**: which programs may run, which pat
 may be touched, and whether a command chains or substitutes its way out of policy.
 It blocks, in order:
 
-- **Unknown tool** — any tool with no policy branch (`gate.py:134-135`).
+- **Unknown tool** — any tool with no policy branch (`gate.py:275-276`).
 - **Path escape, read and write** — a path that resolves outside the sandbox
-  (`gate.py:117-129`); absolute paths and `../` traversal are rejected
+  (`gate.py:258-270`); absolute paths and `../` traversal are rejected
   (`test_gate.py:39-46`). Containment uses `Path.resolve()` and a prefix check,
-  and rejects embedded NULs (`gate.py:105-113`).
+  and rejects embedded NULs (`gate.py:246-254`).
 - **Destructive / out-of-scope commands** — substring denylist covering
   irreversible (`rm -rf`, `rmdir`, `mkfs`, `dd if=/of=`, fork bombs, `shutdown`),
   network (`curl`, `wget`, `ssh`, `scp`, `nc`, `telnet`, `nmap`), privilege/system
   writes (`sudo`, `chmod`, `chown`, `/etc/`, `/usr/`, `launchctl`, `systemctl`),
   package installs, and home/parent references (`gate.py:52-61`).
 - **Command substitution** — `$(...)`, backticks, `${...}` are rejected outright
-  (`gate.py:71,144-145`, `test_gate.py:55`).
+  (`gate.py:121,285-286`, `test_gate.py:55`).
 - **Shell redirects** — `>` and `<` (including glued forms such as `x>>/etc/p`)
-  are rejected outright (`gate.py:72-78,146-148`, `test_gate.py:75-84`).
+  are rejected outright (`gate.py:122-127,287-289`, `test_gate.py:75-86`).
 - **Shell chaining to a denied segment** — the command is split on `&&`, `||`, `;`,
   `|`, newline, and CR, and **every** segment's program head must be in the allowlist,
-  with every path-like argument contained in the sandbox (`gate.py:149-170`,
+  with every path-like argument contained in the sandbox (`gate.py:189-212,290-305`,
   `test_gate.py:59`, `test_gate.py:90`).
 
 It allows only an allowlist of coding programs — `python`, `python3`, `pytest`,
 `ruff`, `black`, `mypy`, `ls`, `cat`, `grep`, `diff`, etc. (`gate.py:63-67`) — with
 in-sandbox path arguments. The policy (`deny`, `allow_heads`) is module-level and
-**overridable per `Gate` instance** (`gate.py:89-102`); the defaults are a sane
+**overridable per `Gate` instance** (`gate.py:215-234`); the defaults are a sane
 coding-agent sandbox, not a universal security policy.
 
 ### Bounded execution — the jail (`jail.py`)
@@ -108,31 +108,34 @@ demonstrates the block; "Not covered" means out of scope for this reference laye
 
 | Surface | Status | Notes |
 |---|---|---|
-| Unknown / unmodeled tool | **Covered** | Deny-by-default BLOCK (`gate.py:134-135`, `test_gate.py:63`). |
-| Path traversal out of sandbox (read + write) | **Covered** | `../`, absolute paths, NUL-injected paths rejected (`gate.py:105-129`, `test_gate.py:39-46`). |
+| Unknown / unmodeled tool | **Covered** | Deny-by-default BLOCK (`gate.py:275-276`, `test_gate.py:63`). |
+| Path traversal out of sandbox (read + write) | **Covered** | `../`, absolute paths, NUL-injected paths rejected (`gate.py:246-270`, `test_gate.py:39-46`). |
 | Destructive / irreversible shell commands | **Covered** | Denylist + tests (`gate.py:52-61`, `test_gate.py:34`). |
 | Network egress via shell command | **Covered (gate)** | `curl`/`wget`/`ssh`/`nc`… blocked (`gate.py:55`). |
 | Network egress from *inside* an allowed program | **Covered (jail, macOS Seatbelt)** | `(deny network*)` — sockets/urlopen fail (`jail.py:55-64`, `test_jail.py`). |
 | Privilege escalation / system-dir writes | **Covered** | `sudo`, `chmod`, `/etc/`, `/usr/`, `launchctl`… blocked (`gate.py:52-61`, `test_gate.py:52`). |
-| Command substitution / shell expansion | **Covered** | `$()`, backticks, `${}` rejected (`gate.py:144-145`, `test_gate.py:55`). |
-| Shell redirects | **Covered** | `>`/`<` including glued forms (`gate.py:146-148`, `test_gate.py:75-84`). |
-| Chaining / newline-separated second command | **Covered** | Per-segment allowlist including newline/CR (`gate.py:70,149-170`, `test_gate.py:59,90`). |
+| Command substitution / shell expansion | **Covered** | `$()`, backticks, `${}` rejected (`gate.py:285-286`, `test_gate.py:55`). |
+| Shell redirects | **Covered** | `>`/`<` including glued forms (`gate.py:287-289`, `test_gate.py:75-86`). |
+| Chaining / newline-separated second command | **Covered** | Per-segment allowlist including newline/CR (`gate.py:120,189-212,290-305`, `test_gate.py:59,90`). |
 | Arbitrary code inside an allowed program writing outside the sandbox | **Covered (jail, macOS Seatbelt)** | `(deny file-write*)` minus the sandbox subpath (`jail.py:55-64`, `test_jail.py`). |
 | Child process escaping the sandbox | **Covered (jail, macOS Seatbelt)** | Children inherit the profile (`test_jail.py`). |
 | Memory / fork bomb, wall-clock runaway | **Covered (jail, macOS Seatbelt)** | RSS watchdog + wall-clock kill, proven live (`jail.py:118-147`, `test_jail.py`). |
-| Ledger tamper / reorder after the fact | **Covered (evident, not prevented)** | Detected on `verify()`; see §4 (`ledger.py:81-104`, `test_ledger.py`). |
-| Receipt metadata tamper | **Covered (evident)** | Signature recomputed over canonical body (`receipts.py:139-142`, `test_receipts.py`). |
+| Ledger tamper / reorder after the fact | **Covered (evident, not prevented)** | Detected on `verify()`; see §4 (`ledger.py:231-238,262-265`, `test_ledger.py`). |
+| Receipt metadata tamper | **Covered (evident)** | Signature recomputed over canonical body (`receipts.py:159-162`, `test_receipts.py`). |
 | Arbitrary code inside an allowed program on **Linux/Windows without a live-verified backend** | **Not covered as live-verified** | Seatbelt tests skip without `sandbox-exec`. `jail.py` contains a **DRAFT** Docker backend; `tests/test_jail_backends.py` gates those tests. Do not read DRAFT as proven. See §5. |
 | An attacker who can rewrite the whole ledger file from genesis | **Not covered** | sha256 is tamper-evident, not signed; there is no authorship proof. See §4. |
-| Ledger tail truncation without an external length anchor | **Not covered by `verify()` alone** | A shorter prefix still re-links. Catch it with a receipt head or `verify_entries(..., expected_len=N)` (`ledger.py:20-27,81-91`). |
-| In-language exfiltration in **gate-only mode** (`use_jail=False`) | **Not covered** | No network/write confinement; use only where another sandbox wraps the process (`cell.py:163-168`). |
+| Ledger tail truncation without an external length anchor | **Not covered by `verify()` alone** | A shorter prefix still re-links. Catch it with a receipt head or `verify_entries(..., expected_len=N)` (`ledger.py:20-28,228-230,239-242`). |
+| Fresh chain started over an existing ledger file (re-run or restart on the same path) | **Covered (refused)** | `Ledger(path)` raises `LedgerForkError` (a `FileExistsError`) instead of forking the file, and the first `record()` re-checks; resuming is explicit via `Ledger.load(path)` (`ledger.py:74-87,114-130,136-139`, `test_ledger.py`, `test_cell.py`). |
+| Two writers on one ledger file (a stale instance appends after another writer, or the file was cut, replaced or deleted under it) | **Covered (refused)** | Every append first checks that the file still ends where this ledger left it (same byte length, same last entry hash) and raises `LedgerForkError` without writing otherwise. A foreign write that lands inside the check-to-write window (there is no OS lock) is not prevented, but that writer's next append refuses and `verify()` reports the fork (`ledger.py:132-157,172-173,191-199`, `test_ledger.py`). |
+| Ledger file deleted or emptied (total truncation) | **Covered (evident)** | `Ledger.load()` of a missing or empty file never verifies as intact without an external anchor, and `persist()` refuses to seal it (`ledger.py:255-261,283`, `test_ledger.py`, `test_receipts.py`). |
+| In-language exfiltration in **gate-only mode** (`use_jail=False`) | **Not covered** | No network/write confinement; use only where another sandbox wraps the process (`cell.py:306-334`). |
 | Side channels, timing, supply-chain of the Python runtime itself | **Not covered** | Out of scope for a reference primitive. |
 | Universal/production security policy | **Not covered** | Defaults are a coding-agent sandbox, overridable; this is a reference primitive, not a hardened production sandbox. |
 
 **Continuously-verified vs. historical red-team.** The macOS jail tests that run on
 every test run cover network egress, write-out, child-process containment,
 memory-bomb kill, and wall-clock kill live, against the real `sandbox-exec`
-(`test_jail.py:44-100`). Separately, a documented development red-team recorded 0 of
+(`test_jail.py:68-102,115-130`). Separately, a documented development red-team recorded 0 of
 9 escape attempts succeeding against the jail, including the two real Seatbelt
 bypasses — `osascript 'do shell script'` (the spawned shell stays sandboxed) and
 `launchctl submit` (no stray job left) — plus loopback `/dev/tcp` egress, DNS, and
@@ -146,15 +149,21 @@ continuously-run suite; the live coverage above is what runs in CI.
 The ledger (`ledger.py`) is an **append-only sha256 hash chain**. Each entry stores
 who/what/the verdict/a sha256 of the outcome, plus `prev_hash` and `entry_hash`;
 `entry_hash = sha256(prev_hash + "\n" + canonical_json(payload))`, genesis-anchored
-(`ledger.py:50-73`). The outcome is stored as a hash, not verbatim, so the ledger
+(`ledger.py:159-200`). The outcome is stored as a hash, not verbatim, so the ledger
 testifies that a specific output occurred without becoming a data-exfiltration sink
-(`ledger.py:55-69`).
+(`ledger.py:164-183`).
+
+On disk the ledger is one JSON record per `"\n"`-terminated line. Every reader splits
+records on `"\n"` only, never with `str.splitlines()`, because U+2028, U+2029 and
+U+0085 may appear raw inside a record's strings. A line holding only JSON whitespace
+is blank; anything else that is not a whole record fails closed
+(`ledger.py:55-61,287-289`).
 
 **The precise claim — and its bound:**
 
 - It is **tamper-evident**, not tamper-proof. Mutating or reordering any entry
   breaks the re-link, and `verify()` returns `(False, location)` naming the first
-  broken entry (`ledger.py:81-104`, `test_ledger.py`).
+  broken entry (`ledger.py:231-238,262-265`, `test_ledger.py`).
 - It proves **internal consistency** — no entry was altered or reordered — **not
   authorship**. It does not prove *who* wrote the chain.
 - The **ledger core is keyless sha256.** Do not describe it as "cryptographically
@@ -168,29 +177,57 @@ testifies that a specific output occurred without becoming a data-exfiltration s
   signs nothing the agent does. The core stays keyless on purpose.
 - `verify()` on its own does **not** detect tail truncation. A shorter prefix still
   re-links. Use a sealed receipt or `verify_entries(..., expected_len=N)`
-  (`ledger.py:20-27,81-91`).
+  (`ledger.py:20-28,228-230,239-242`).
+- Total loss is the exception, and it fails closed. A ledger that `Ledger.load()`
+  rehydrates from a missing or empty file never verifies as intact on its own:
+  zero entries is exactly what deleting or emptying the file produces. `verify()`
+  returns `(False, "no testimony: …")` unless an external anchor commits to an
+  empty chain (`expected_head=Ledger.GENESIS` or `expected_length=0`, e.g. a
+  receipt's `ledger_head` / `ledger_length` for a run that recorded nothing). A
+  live ledger that has recorded nothing first-hand is not absent testimony and is
+  unaffected: it verifies, `persist()` mints its receipt with `ledger_length` 0
+  and `ledger_head` GENESIS, and C-CHAIN-INTACT abstains for that run
+  (`ledger.py:245-265,283`).
+- A fresh chain never forks an existing file. `Ledger(path)` starts at GENESIS, so
+  it raises `LedgerForkError` (a `FileExistsError`) when `path` already holds a
+  chain, and the first
+  `record()` re-checks before appending; the file is left byte-for-byte unchanged.
+  Continuing a chain is explicit: `Ledger.load(path)`, then `record()`
+  (`ledger.py:74-87,114-130,136-139,271-292`).
+- A stale writer never forks the file either. Before every append, `record()`
+  reads only the file's tail and checks that the file still ends where this
+  ledger left it: the same byte length (as read by `load()`, then as expected
+  after each of its own writes) and the same last entry hash. If another writer
+  appended to it, cut it or replaced it, or it vanished, `record()` raises
+  `LedgerForkError` and writes nothing; the in-memory chain advances only after
+  a write lands. Two processes that pass the check at the same instant are not
+  serialized (there is no OS lock): that fork reaches the file, but either
+  writer's next append refuses and `verify()` reports the break
+  (`ledger.py:132-157,172-173,191-199,286`).
 
 **Recompute-not-trust verifier contract.** Both verifiers recompute; neither
 returns a stored boolean:
 
 - `Ledger.verify_entries(entries, genesis)` re-links a chain from a list of stored
-  entries with no live chain needed, so a third party can verify a persisted log
-  (`ledger.py:81-100`).
+  entries with no live chain needed (`ledger.py:210-243`). A bare list carries no
+  provenance, so an empty list re-links vacuously unless you pass the published
+  head / length. To verify a persisted log *file*, a third party uses
+  `Ledger.load(path).verify(...)`, which refuses a missing or empty file.
 - `receipts.verify(receipt_id)` (1) re-links the chain and (2) recomputes the
   receipt's content-hash signature over the canonical body; **any** mutated chain
   entry or mutated metadata returns `False`, fail-closed, as do missing or
-  unparseable receipts (`receipts.py:121-142`, `test_receipts.py`). Note: the
+  unparseable receipts (`receipts.py:131-162`, `test_receipts.py`). Note: the
   "signature" is a content hash, not an authorship signature — see the sha256 bound
-  above (`receipts.py:20-23,99`).
+  above (`receipts.py:22-25,109`).
 - `receipts.persist()` runs that real verifier as a **write-time round-trip and
   RAISES on failure** — a corrupt write can never be reported as success — and
   refuses outright to persist a chain that is already broken
-  (`receipts.py:75-77,113-114`, `test_receipts.py`).
+  (`receipts.py:76-79,122-124`, `test_receipts.py`).
 
 Receipts are written atomically (temp file → `os.replace`) into a per-producer
 directory with an append-only `index.jsonl` and a `LATEST` pointer, so a downstream
 gate (CI, a release check) can ask one question — "did this run testify cleanly?" —
-and get a fail-closed answer (`receipts.py:100-117`).
+and get a fail-closed answer (`receipts.py:111-126`).
 
 ---
 
@@ -229,14 +266,14 @@ and **raises** rather than build an un-jailed command if `sandbox-exec` is missi
 (`jail.py:108-109`). `run_jailed()` returns `killed="no-jail"` without executing
 when `select_backend()` is None (`jail.py:278-282`). `Cell._run_cmd` refuses with an
 explicit fail-closed error when `use_jail=True` and `jail_available()` is False
-(`cell.py:158-159`). Callers must never execute un-jailed on a false.
+(`cell.py:299-300`). Callers must never execute un-jailed on a false.
 
 **Linux / Docker note.** The **live-verified** in-language jail is **macOS
 Seatbelt**. The Docker backend in `jail.py` is labeled DRAFT in source
 (`jail.py:170-185`) and its tests are gated. Do not treat a present Docker CLI as
 proven confinement. Gate-only mode (`use_jail=False`) is available where another
 sandbox already wraps the process, with no network/write confinement from Deponent
-(`cell.py:163-168`). **The Gate and Ledger above the jail are platform-independent.**
+(`cell.py:306-334`). **The Gate and Ledger above the jail are platform-independent.**
 
 ---
 
@@ -246,23 +283,26 @@ Every failure path halts (fail-closed). There are **no fail-open paths**.
 
 | Failure | Behavior |
 |---|---|
-| Unknown tool | **Halt** — BLOCK `unknown-tool` (`gate.py:134-135`). |
-| Empty / non-string command | **Halt** — BLOCK `empty-command` (`gate.py:137-139`). |
-| Unparsable command (bad shlex) | **Halt** — BLOCK `unparsable-command` (`gate.py:156-157`). |
-| Path escapes sandbox (read/write/arg) | **Halt** — BLOCK out-of-sandbox (`gate.py:117-129,168-169`). |
-| Destructive / network / privilege command | **Halt** — BLOCK `destructive-or-out-of-scope` (`gate.py:141-143`). |
-| Command substitution | **Halt** — BLOCK `command-substitution` (`gate.py:144-145`). |
-| Shell redirect | **Halt** — BLOCK `shell-redirect` (`gate.py:146-148`). |
-| Program not in allowlist | **Halt** — BLOCK `program-not-allowlisted` (`gate.py:161-162`). |
-| No confinement backend (`use_jail=True`) | **Halt** — refuse to run un-jailed; raise / `no-jail` / explicit error (`jail.py:108-109,278-282`, `cell.py:158-159`). |
+| Unknown tool | **Halt** — BLOCK `unknown-tool` (`gate.py:275-276`). |
+| Empty / non-string command | **Halt** — BLOCK `empty-command` (`gate.py:279-280,294-295`). |
+| Unparsable command (bad shlex) | **Halt** — BLOCK `unparsable-command` (`gate.py:290-293`). |
+| Path escapes sandbox (read/write/arg) | **Halt** — BLOCK out-of-sandbox (`gate.py:258-270,302-305`). |
+| Destructive / network / privilege command | **Halt** — BLOCK `destructive-or-out-of-scope` (`gate.py:281-284`). |
+| Command substitution | **Halt** — BLOCK `command-substitution` (`gate.py:285-286`). |
+| Shell redirect | **Halt** — BLOCK `shell-redirect` (`gate.py:287-289`). |
+| Program not in allowlist | **Halt** — BLOCK `program-not-allowlisted` (`gate.py:299-301`). |
+| No confinement backend (`use_jail=True`) | **Halt** — refuse to run un-jailed; raise / `no-jail` / explicit error (`jail.py:108-109,278-282`, `cell.py:299-300`). |
 | Memory cap exceeded | **Halt** — process group killed, `killed="memory>NMB"` (`jail.py:137-138`). |
 | Wall-clock cap exceeded | **Halt** — process group killed, `killed="wallclock>Ns"` (`jail.py:139-140`). |
-| Ledger entry mutated / reordered | **Halt** — `verify()` → `(False, location)` (`ledger.py:93-98`). |
-| Receipt chain or metadata tampered | **Halt** — `verify()` → `False` (`receipts.py:135-142`). |
-| Receipt missing / unparseable | **Halt** — `verify()` → `False` (`receipts.py:125-130`). |
-| Broken chain at persist time | **Halt** — `persist()` raises `ValueError` (`receipts.py:75-77`). |
-| Receipt fails round-trip verify after write | **Halt** — `persist()` raises `RuntimeError` (`receipts.py:113-114`). |
-| Malformed tool *parameters* (e.g. wrong arg name) | **Fail-soft execution, fail-closed policy** — the error is fed back to the agent so it can self-correct; the loop never crashes; the gate verdict still stands and is recorded. **The policy never fails open** (`cell.py:94-101`, `test_cell.py:72`). |
+| Ledger entry mutated / reordered | **Halt** — `verify()` → `(False, location)` (`ledger.py:232-237`). |
+| Fresh chain over a file that already holds one | **Halt** — `Ledger(path)` or its first `record()` raises `LedgerForkError` (a `FileExistsError`); the file is unchanged (`ledger.py:74-87,114-130,136-139`). |
+| Ledger file changed under a writer (another writer appended, or it was cut, replaced or deleted) | **Halt** — `record()` raises `LedgerForkError` before writing; the file and the in-memory chain are unchanged (`ledger.py:132-157`). |
+| Ledger file missing / empty on load | **Halt** — `verify()` → `(False, "no testimony: …")` unless an external anchor commits to an empty chain; `persist()` raises `ValueError` before any write (`ledger.py:255-261`, `receipts.py:77-79`). |
+| Receipt chain or metadata tampered | **Halt** — `verify()` → `False` (`receipts.py:152-162`). |
+| Receipt missing / unparseable | **Halt** — `verify()` → `False` (`receipts.py:134-144`). |
+| Broken chain at persist time | **Halt** — `persist()` raises `ValueError` (`receipts.py:76-79`). |
+| Receipt fails round-trip verify after write | **Halt** — `persist()` raises `RuntimeError` (`receipts.py:122-124`). |
+| Malformed tool *parameters* (e.g. wrong arg name) | **Fail-soft execution, fail-closed policy** — the error is fed back to the agent so it can self-correct; the loop never crashes; the gate verdict still stands and is recorded. **The policy never fails open** (`cell.py:132-139`, `test_cell.py:72`). |
 
 The last row is the only "continue," and it is deliberate: a malformed call is an
 *agent* error, not a *policy* failure. Execution fails soft (returns a corrective
@@ -297,13 +337,13 @@ fail-closed receipt round-trip.
 
 - **Version `0.1.2`** (`deponent/__init__.py`, `pyproject.toml`). Development
   Status: 4 — Beta (`pyproject.toml`).
-- **`deponent-receipt/v1`** is the receipt schema (`receipts.py:40`). Receipt
+- **`deponent-receipt/v1`** is the receipt schema (`receipts.py:42`). Receipt
   body fields, the canonical-body signature definition, and the genesis-anchored
   chain hash are the on-disk contract; a breaking change to any of them is intended
   to bump the schema string. Multi-schema verification (verifying an old receipt
   under its own schema version) is a forward commitment, **not yet implemented** —
   the current `verify()` validates one schema and does not dispatch on the schema
-  field (`receipts.py:121-142`).
+  field (`receipts.py:131-162`).
 - **Public API** (`__init__.__all__`): `Cell`, `ActResult`, `Gate`, `GateDecision`,
   `DENY_SUBSTR`, `ALLOW_HEADS`, `build_gate`, `build_cell`, `Ledger`, `Claim`,
   `ClaimSet`, `attest`, `jail_available`, `jail_command`, `run_jailed`, `persist`,

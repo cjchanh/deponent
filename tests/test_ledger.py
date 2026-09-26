@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Tamper-evidence proof for the hash-chained ledger.
 Run: python -m pytest -q tests/test_ledger.py"""
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from deponent import Gate, Ledger
 
@@ -164,6 +166,267 @@ class TestLedger(unittest.TestCase):
         del led.entries[1]
         ok, _ = led.verify()
         self.assertFalse(ok)
+
+    # --- absent testimony: a missing or empty ledger FILE is never "intact" ---
+    # Zero entries rehydrated from disk is exactly what deleting or emptying the file
+    # produces, so load() + verify() must not call it intact without an external anchor.
+    def _record_two(self) -> Ledger:
+        led = Ledger(self.log)
+        for cmd in ("ls", "echo a"):
+            d = self.gate.evaluate("run_cmd", {"cmd": cmd})
+            led.record(agent="b", tool="run_cmd", params={"cmd": cmd}, decision=d, outcome="x")
+        return led
+
+    def test_load_of_missing_path_is_not_intact(self):
+        gone = self.work / "gone.jsonl"
+        self.assertFalse(gone.exists())
+        ok, msg = Ledger.load(gone).verify()
+        self.assertFalse(ok, msg)
+        self.assertIn("no testimony", msg)
+        self.assertIn("not found", msg)
+
+    def test_deleted_ledger_file_is_not_intact_on_reload(self):
+        self._record_two()
+        self.log.unlink()
+        ok, msg = Ledger.load(self.log).verify()
+        self.assertFalse(ok, msg)
+        self.assertIn("not found", msg)
+
+    def test_emptied_ledger_file_is_not_intact_on_reload(self):
+        self._record_two()
+        for emptied in ("", "\n   \n\n"):                     # 0 bytes; blank lines only
+            self.log.write_text(emptied, encoding="utf-8")
+            ok, msg = Ledger.load(self.log).verify()
+            self.assertFalse(ok, f"{emptied!r}: {msg}")
+            self.assertIn("no testimony", msg)
+
+    def test_empty_loaded_chain_verifies_only_against_an_external_anchor(self):
+        # A zero-action run never creates its file (record() writes lazily); its
+        # published empty head (GENESIS / length 0) must still verify it.
+        led = Ledger.load(self.work / "zero-action-run.jsonl")
+        for anchor in ({"expected_head": Ledger.GENESIS}, {"expected_length": 0}):
+            ok, msg = led.verify(**anchor)
+            self.assertTrue(ok, f"{anchor}: {msg}")
+        for anchor in ({"expected_head": "0" * 64}, {"expected_length": 2}):
+            ok, msg = led.verify(**anchor)
+            self.assertFalse(ok, f"{anchor}: {msg}")
+
+    def test_provenance_default_lives_on_the_instance(self):
+        # Class-level state must never decide a live ledger's verdict (attack round 1).
+        with mock.patch.object(Ledger, "_loaded_file_found", False, create=True):
+            ok, msg = Ledger(self.log).verify()
+        self.assertTrue(ok, msg)
+
+    def test_load_of_missing_path_still_starts_a_verifiable_chain(self):
+        led = Ledger.load(self.log)                       # first run: no file yet
+        d = self.gate.evaluate("run_cmd", {"cmd": "ls"})
+        led.record(agent="b", tool="run_cmd", params={"cmd": "ls"}, decision=d, outcome="x")
+        ok, msg = led.verify()
+        self.assertTrue(ok, msg)
+        ok_reloaded, msg_reloaded = Ledger.load(self.log).verify()
+        self.assertTrue(ok_reloaded, msg_reloaded)
+
+    # --- a fresh chain never forks an existing ledger file ---
+    # Ledger(path) starts at GENESIS; appending that onto a file that already holds a
+    # chain forks it (the file then fails load().verify() at the seam). Resuming an
+    # existing chain is explicit: Ledger.load(path).
+    def test_constructor_refuses_a_file_that_already_holds_a_chain(self):
+        self._record_two()
+        before = self.log.read_bytes()
+        with self.assertRaises(FileExistsError):
+            Ledger(self.log)
+        self.assertEqual(self.log.read_bytes(), before)
+
+    def test_fresh_chain_refuses_to_append_onto_a_file_that_gained_entries(self):
+        late = Ledger(self.log)                           # bound while the file is absent
+        self._record_two()                                # another writer fills it first
+        before = self.log.read_bytes()
+        d = self.gate.evaluate("run_cmd", {"cmd": "ls"})
+        with self.assertRaises(FileExistsError):
+            late.record(agent="b", tool="run_cmd", params={"cmd": "ls"}, decision=d)
+        self.assertEqual(self.log.read_bytes(), before)
+        self.assertEqual((late.entries, late.prev), ([], Ledger.GENESIS))
+
+    def test_resume_with_load_continues_one_verifiable_chain(self):
+        self._record_two()
+        resumed = Ledger.load(self.log)
+        d = self.gate.evaluate("run_cmd", {"cmd": "ls"})
+        resumed.record(agent="b", tool="run_cmd", params={"cmd": "ls"}, decision=d, outcome="x")
+        reloaded = Ledger.load(self.log)
+        ok, msg = reloaded.verify()
+        self.assertTrue(ok, msg)
+        self.assertEqual(len(reloaded.entries), 3)
+
+    # --- a stale writer never forks the file (R2-1): every append checks the tail ---
+    # The file must still end where this ledger left it (same byte length, same last
+    # entry hash); otherwise another writer moved or cut it and appending from a stale
+    # head would fork it. The refusal writes nothing.
+    def _append(self, led: Ledger, cmd: str = "ls") -> dict:
+        d = self.gate.evaluate("run_cmd", {"cmd": cmd})
+        return led.record(agent="b", tool="run_cmd", params={"cmd": cmd}, decision=d, outcome="x")
+
+    def test_stale_instance_refuses_to_fork_after_another_writer_appends(self):
+        self._record_two()
+        first, second = Ledger.load(self.log), Ledger.load(self.log)
+        self._append(first, "echo first")
+        before = self.log.read_bytes()
+        stale = (list(second.entries), second.prev)
+        with self.assertRaises(FileExistsError) as caught:
+            self._append(second, "echo second")
+        self.assertIn("changed since", str(caught.exception))
+        self.assertEqual(self.log.read_bytes(), before)
+        self.assertEqual((second.entries, second.prev), stale)
+        ok, msg = Ledger.load(self.log).verify()
+        self.assertTrue(ok, msg)
+
+    def test_append_refuses_a_file_cut_under_it(self):
+        self._record_two()
+        led = Ledger.load(self.log)
+        self.log.write_bytes(self.log.read_bytes().splitlines(keepends=True)[0])
+        before = self.log.read_bytes()
+        with self.assertRaises(FileExistsError):
+            self._append(led)
+        self.assertEqual(self.log.read_bytes(), before)
+
+    def test_append_refuses_a_same_length_rechained_tail(self):
+        # Same byte length, different last entry: only the head check can see it.
+        self._record_two()
+        led = Ledger.load(self.log)
+        first, last = [json.loads(x) for x in self.log.read_text(encoding="utf-8").split("\n")[:2]]
+        last["agent"] = "c"                                   # same length as "b"
+        payload = {k: v for k, v in last.items() if k not in ("prev_hash", "entry_hash")}
+        last["entry_hash"] = Ledger._hash(last["prev_hash"], payload)
+        forged = "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in (first, last)).encode()
+        self.assertEqual(len(forged), self.log.stat().st_size)
+        self.log.write_bytes(forged)
+        with self.assertRaises(FileExistsError):
+            self._append(led)
+        self.assertEqual(self.log.read_bytes(), forged)
+
+    def test_append_refuses_bytes_added_after_its_last_entry(self):
+        # Same last entry, longer file: only the length check can see it.
+        self._record_two()
+        led = Ledger.load(self.log)
+        with self.log.open("ab") as f:
+            f.write(b"\n")
+        before = self.log.read_bytes()
+        with self.assertRaises(FileExistsError):
+            self._append(led)
+        self.assertEqual(self.log.read_bytes(), before)
+
+    def test_append_refuses_when_its_file_vanished(self):
+        self._record_two()
+        led = Ledger.load(self.log)
+        self.log.unlink()
+        with self.assertRaises(FileExistsError):
+            self._append(led)
+        self.assertFalse(self.log.exists())
+
+    def test_write_slipped_into_the_check_window_is_refused_at_the_next_append(self):
+        # Residual H8: with no OS lock, a foreign write can land between this ledger's
+        # check and its own write. That one is not prevented (the fork reaches the file,
+        # and verify() reports it), but the very next append must refuse, because the
+        # file is longer than this ledger's own writes explain.
+        self._record_two()
+        mine, other = Ledger.load(self.log), Ledger.load(self.log)
+        fired = []
+
+        def hash_then_race(prev, payload):
+            if not fired:
+                fired.append(True)
+                self._append(other, "echo other")         # lands inside mine's window
+            return Ledger._hash(prev, payload)
+
+        mine._hash = hash_then_race
+        self._append(mine, "echo mine")
+        del mine._hash
+        self.assertFalse(Ledger.load(self.log).verify()[0])  # the fork is on disk, evident
+        before = self.log.read_bytes()
+        with self.assertRaises(FileExistsError):
+            self._append(mine, "echo mine again")
+        self.assertEqual(self.log.read_bytes(), before)
+
+    # --- the reader matches the writer (R3): records are split on "\n" only ---
+    # json.dumps(ensure_ascii=False) leaves U+2028, U+2029 and U+0085 raw inside strings;
+    # str.splitlines() cut a record there, so an agent could make its own testimony
+    # unloadable through any tool parameter.
+    def _round_trip_with(self, sep: str) -> None:
+        led = Ledger(self.log)
+        self._append(led, "ls")
+        self._append(led, f"ls a{sep}b")
+        reloaded = Ledger.load(self.log)
+        ok, msg = reloaded.verify()
+        self.assertTrue(ok, f"{sep!r}: {msg}")
+        self.assertEqual(reloaded.head(), led.head())
+        self.assertEqual(reloaded.entries[-1]["params"]["cmd"], f"ls a{sep}b")
+
+    def test_u2028_in_a_param_round_trips(self):
+        self._round_trip_with(" ")
+
+    def test_u2029_in_a_param_round_trips(self):
+        self._round_trip_with(" ")
+
+    def test_u0085_in_a_param_round_trips(self):
+        self._round_trip_with("\u0085")
+
+    def test_a_stray_line_separator_between_records_fails_closed(self):
+        led = Ledger(self.log)
+        self._append(led, "ls")
+        self._append(led, "echo a")
+        first, second = self.log.read_text(encoding="utf-8").split("\n")[:2]
+        self.log.write_text(first + "\n \n" + second + "\n", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            Ledger.load(self.log)
+
+    def test_constructor_counts_non_json_whitespace_as_content(self):
+        self.log.write_bytes(b"\x0b\n")                 # blank to str.strip(), not to JSON
+        with self.assertRaises(FileExistsError):
+            Ledger(self.log)
+
+    def test_a_record_cut_mid_way_fails_closed(self):
+        led = Ledger(self.log)
+        self._append(led, "ls")
+        self._append(led, "echo a")
+        first, second = self.log.read_text(encoding="utf-8").split("\n")[:2]
+        self.log.write_text(first + "\n" + second[:-5] + "\n", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            Ledger.load(self.log)
+
+    def test_append_refuses_a_tail_the_loader_cannot_parse(self):
+        # Same size, but the final "\n" became "\v": appending would glue two records
+        # into one unloadable line, so the tail check must read "\v" as content too.
+        self._record_two()
+        led = Ledger.load(self.log)
+        self.log.write_bytes(self.log.read_bytes()[:-1] + b"\x0b")
+        before = self.log.read_bytes()
+        with self.assertRaises(FileExistsError):
+            self._append(led)
+        self.assertEqual(self.log.read_bytes(), before)
+
+    def test_crlf_records_from_a_text_mode_writer_still_load_and_resume(self):
+        # Released writers used text mode, which wrote "\r\n" on Windows; keep those working.
+        led = Ledger(self.log)
+        self._append(led, "ls")
+        self._append(led, "echo a")
+        self.log.write_bytes(self.log.read_bytes().replace(b"\n", b"\r\n"))
+        resumed = Ledger.load(self.log)
+        ok, msg = resumed.verify()
+        self.assertTrue(ok, msg)
+        self.assertEqual(resumed.head(), led.head())
+        self._append(resumed, "echo b")
+        reloaded = Ledger.load(self.log)
+        ok, msg = reloaded.verify()
+        self.assertTrue(ok, msg)
+        self.assertEqual(reloaded.head()[1], 3)
+
+    def test_constructor_over_an_empty_file_starts_a_fresh_chain(self):
+        for blank in ("", "\n  \n"):                      # 0 bytes; blank lines only
+            self.log.write_text(blank, encoding="utf-8")
+            led = Ledger(self.log)
+            d = self.gate.evaluate("run_cmd", {"cmd": "ls"})
+            led.record(agent="b", tool="run_cmd", params={"cmd": "ls"}, decision=d, outcome="x")
+            ok, msg = Ledger.load(self.log).verify()
+            self.assertTrue(ok, f"{blank!r}: {msg}")
 
     def test_readme_names_external_head_anchor(self):
         text = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")

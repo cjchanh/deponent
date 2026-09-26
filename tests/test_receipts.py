@@ -94,6 +94,24 @@ class TestReceipts(unittest.TestCase):
         self.assertEqual(r["ledger_length"], 0)
         self.assertTrue(RA.verify(r["receipt_id"], root=self.root))
 
+    def test_persist_refuses_to_mint_a_receipt_from_a_missing_ledger_file(self):
+        gone = Ledger.load(self.work / "gone.jsonl")
+        with self.assertRaises(ValueError) as caught:
+            RA.persist(gone, session_id="gonehead0001", root=self.root)
+        self.assertIn("no testimony", str(caught.exception))
+        self.assertEqual(list((self.root / RA.PRODUCER).glob("*.json")), [])
+        self.assertFalse((self.root / RA.PRODUCER / "LATEST").exists())
+
+    def test_persist_refuses_to_mint_a_receipt_from_an_empty_ledger_file(self):
+        emptied = self.work / "emptied.jsonl"
+        for blank in ("", "\n   \n"):                        # 0 bytes; blank lines only
+            emptied.write_text(blank, encoding="utf-8")
+            with self.assertRaises(ValueError) as caught:
+                RA.persist(Ledger.load(emptied), session_id="emptyfile001", root=self.root)
+            self.assertIn("no testimony", str(caught.exception))
+        self.assertEqual(list((self.root / RA.PRODUCER).glob("*.json")), [])
+        self.assertFalse((self.root / RA.PRODUCER / "LATEST").exists())
+
     def test_verify_rejects_re_signed_truncated_chain_via_ledger_head(self):
         r = self._persist()
         p = self.root / RA.PRODUCER / f"{r['receipt_id']}.json"

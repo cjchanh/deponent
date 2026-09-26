@@ -77,10 +77,24 @@ Every gate decision plus its outcome is appended as one entry, sha256 hash-linke
 |---|--------|--------------------|--------------|---------|
 | L1 | Forge a verdict — flip a recorded `BLOCK` to `ALLOW_FORGED` after the fact | Re-link breaks; `verify()` returns `False` with `"hash mismatch"` and the entry index | `test_tamper_is_detected` | DETECTED |
 | L2 | Reorder entries — swap two recorded entries | The `prev_hash` chain no longer links; `verify()` returns `False` | `test_reordering_is_detected` | DETECTED |
+| L3 | Delete the ledger file, then reload it | A missing file is never intact; `verify()` returns `False` with `"no testimony"` | `test_deleted_ledger_file_is_not_intact_on_reload` | DETECTED |
+| L4 | Empty the ledger file (0 bytes or blank lines), then reload it | Total truncation is never intact; `verify()` returns `False` with `"no testimony"` | `test_emptied_ledger_file_is_not_intact_on_reload` | DETECTED |
+| L5 | Start a fresh chain over a file that already holds one (re-run or restart on the same path) | `Ledger(path)` raises `LedgerForkError` (a `FileExistsError`); the file's bytes are unchanged | `test_constructor_refuses_a_file_that_already_holds_a_chain` | REFUSED |
+| L6 | The file gains a chain between construction and the first record | The first `record()` raises `LedgerForkError` before writing; file and live chain unchanged | `test_fresh_chain_refuses_to_append_onto_a_file_that_gained_entries` | REFUSED |
+| L7 | Two writers on one file: a stale instance appends after another writer appended | `record()` raises `LedgerForkError`; the file is byte-identical and still verifies | `test_stale_instance_refuses_to_fork_after_another_writer_appends` | REFUSED |
+| L8 | A foreign write lands inside the check-to-write window (no OS lock) | Not prevented: the fork reaches the file and `verify()` reports it; the writer's next append refuses | `test_write_slipped_into_the_check_window_is_refused_at_the_next_append` | DETECTED + next append REFUSED |
+| L9 | An agent puts U+2028, U+2029 or U+0085 in a tool parameter | The record keeps it raw inside a string; `Ledger.load()` splits on `"\n"` only, so the file reloads intact with the same head | `test_u2028_in_a_param_round_trips` (and the U+2029 / U+0085 twins) | ROUND-TRIPS |
+| L10 | A stray line separator is planted between records | `Ledger.load()` fails closed (`ValueError`); it never skips the line | `test_a_stray_line_separator_between_records_fails_closed` | FAIL-CLOSED |
 
 **L1 is the canary against the most tempting attack: rewriting history to say the agent was allowed to do what it actually did.** The test records a real decision, mutates the stored `verdict` field, and re-verifies. Because the entry hash is computed over the full payload and linked to the prior hash, the mutation cannot be hidden — `verify()` returns `False` and names exactly where the chain broke.
 
 L2 proves order is load-bearing, not cosmetic: swapping two entries breaks the `prev_hash` re-link even if no field inside any entry is altered.
+
+L3 and L4 close the limit case of truncation: zero entries read back from disk is exactly what deleting or emptying the file produces, so a reloaded ledger with nothing in it is refused, never called intact. A genuinely empty run still verifies against its published empty head (`expected_head=Ledger.GENESIS` / `expected_length=0`): `test_empty_loaded_chain_verifies_only_against_an_external_anchor`.
+
+L5 and L6 close the fork. A fresh chain starts at GENESIS, so appending it to a file that already holds a chain would leave the file unverifiable at the seam while the live object still reported intact. The kernel refuses instead, and continuing a chain is explicit: `Ledger.load(path)`, proven by `test_resume_with_load_continues_one_verifiable_chain`.
+
+L7 and L8 cover a stale writer. Every append checks that the file still ends where this ledger left it: the same byte length and the same last entry hash. A cut file, a same-length re-chained tail, bytes appended after the last entry and a vanished file are each refused too (`test_append_refuses_a_file_cut_under_it`, `test_append_refuses_a_same_length_rechained_tail`, `test_append_refuses_bytes_added_after_its_last_entry`, `test_append_refuses_when_its_file_vanished`). L8 is the honest limit: without an OS lock, two writers that pass the check at the same instant still fork the file. That fork is detected, not prevented.
 
 `test_chain_intact_and_verifies` and `test_persist_and_reload_roundtrip` prove the honest path: an untouched chain verifies, and a chain persisted to disk and reloaded still verifies.
 
@@ -102,6 +116,7 @@ A receipt is a self-contained, re-verifiable record of one governed run: the ful
 | R2 | Tamper metadata — flip `outcome` to `GOVERNED_PASS_FORGED` without re-signing | Content-hash signature no longer matches the body; `verify()` returns `False` | `test_tamper_metadata_detected` | DETECTED |
 | R3 | Missing receipt — verify an ID that does not exist | Fail-closed: `verify()` returns `False`, never raises into a pass | `test_missing_receipt_fails_closed` | FAIL-CLOSED |
 | R4 | Broken chain at write time — corrupt an `entry_hash` before `persist()` | `persist()` refuses to emit a receipt for an inconsistent chain; raises `ValueError` | `test_refuses_broken_chain` | REFUSED |
+| R5 | Seal absent testimony — `persist()` a ledger loaded from a missing file | `persist()` refuses before any write; raises `ValueError` (`"no testimony"`); no receipt, no `LATEST`. A live ledger that recorded nothing first-hand still persists, with `ledger_length` 0 | `test_persist_refuses_to_mint_a_receipt_from_a_missing_ledger_file` | REFUSED |
 
 **R1 and R2 cover the two independent tamper surfaces.** R1 flips a verdict *inside* the chain (an attacker turning a recorded BLOCK into an ALLOW) and the chain re-link catches it. R2 flips the receipt's *outer* metadata (`outcome`) without re-signing, and the recomputed content-hash signature catches it. Both the body and the chain are verified; tampering with either fails the receipt.
 
@@ -126,6 +141,7 @@ The Cell is the whole architecture in one object: `gate -> (jail) -> ledger`, on
 | C5 | Chain verifies after mixed allow/block actions | Three actions (write, blocked `rm -rf`, read); `verify()` returns `True`, three entries | `test_chain_verifies_after_mixed_actions` | VERIFIED |
 | C6 | Malformed call fails soft, not crash | Wrong param name fed back as an error the agent can self-correct; loop survives; attempt recorded | `test_malformed_call_fails_soft_not_crash` | FAIL-SOFT |
 | C7 | Disposable relative target `rm -rf ./blocked-example` with sentinel bytes | BLOCK; directory and sentinel bytes unchanged; ledger re-verifies | `test_disposable_relative_target_is_blocked_unchanged_and_testified` | BLOCKED + unchanged + testified |
+| C8 | Re-run a Cell over an existing ledger file | Construction refused (`FileExistsError`); the first run's file is unchanged and still verifies | `test_rerun_over_an_existing_ledger_file_is_refused_not_forked` | REFUSED |
 
 **C2 records the road not taken: a refusal is testimony too.** The blocked `rm -rf /` is recorded in the ledger, not silently dropped. The record of what an agent *tried* to do and was denied is as auditable as what it was allowed to do.
 

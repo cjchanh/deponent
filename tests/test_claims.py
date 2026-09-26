@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from deponent import Cell
+from deponent import Cell, Ledger
 from deponent.claims import attest
 
 try:  # reconcile is an optional module.
@@ -45,6 +45,29 @@ class TestAttestUnit(unittest.TestCase):
         self.assertEqual(_by_id(cs, "C-BLOCKS-RECORDED").status, "ABSTAIN")
         self.assertEqual(_by_id(cs, "C-CHAIN-INTACT").status, "ABSTAIN")  # no ledger given
         self.assertTrue(cs.sound)  # abstaining is not a contradiction
+
+    def test_missing_ledger_file_refutes_the_chain_claim(self):
+        work = Path(tempfile.mkdtemp(prefix="claims-gone-"))
+        cs = attest([], ledger=Ledger.load(work / "gone.jsonl"))
+        chain = _by_id(cs, "C-CHAIN-INTACT")
+        self.assertEqual(chain.status, "REFUTED", chain.basis)
+        self.assertIn("no testimony", chain.basis)
+        self.assertFalse(cs.sound)
+
+    def test_empty_ledger_file_refutes_the_chain_claim(self):
+        work = Path(tempfile.mkdtemp(prefix="claims-empty-"))
+        for blank in ("", "\n   \n"):                        # 0 bytes; blank lines only
+            (work / "l.jsonl").write_text(blank, encoding="utf-8")
+            cs = attest([], ledger=Ledger.load(work / "l.jsonl"))
+            chain = _by_id(cs, "C-CHAIN-INTACT")
+            self.assertEqual(chain.status, "REFUTED", f"{blank!r}: {chain.basis}")
+            self.assertFalse(cs.sound)
+
+    def test_actions_with_an_empty_ledger_refute_the_chain_claim(self):
+        cs = attest([_R("write_file", "ALLOW")], ledger=Ledger())   # 1 action, 0 entries
+        chain = _by_id(cs, "C-CHAIN-INTACT")
+        self.assertEqual(chain.status, "REFUTED", chain.basis)
+        self.assertFalse(cs.sound)
 
     def test_permanent_boundaries_always_abstain(self):
         cs = attest([_R("write_file", "ALLOW")], jailed=True,
@@ -89,6 +112,13 @@ class TestAttestOverRealRun(unittest.TestCase):
 
     def setUp(self):
         self.work = Path(tempfile.mkdtemp(prefix="claims-"))
+
+    def test_zero_action_run_abstains_on_the_chain_claim(self):
+        cell = Cell(self.work, ledger_path=self.work / "l.jsonl", use_jail=False)
+        cs = cell.attest()                                   # nothing was ever recorded
+        chain = _by_id(cs, "C-CHAIN-INTACT")
+        self.assertEqual(chain.status, "ABSTAIN", chain.basis)
+        self.assertTrue(cs.sound)
 
     def test_clean_run_is_sound_and_honest(self):
         cell = Cell(self.work, ledger_path=self.work / "l.jsonl", use_jail=False)
