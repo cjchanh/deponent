@@ -1,9 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.1.3
 
-Ledger verification now fails closed on missing, empty or forked testimony. Callers that used to get a success on these inputs now get a refusal.
+Credential shield, and ledger verification that fails closed on missing, empty or forked testimony. Callers that used to get a success on these ledger inputs now get a refusal.
 
+- **Credential shield** (`python3 -m deponent shield` / `python3 -m deponent shield-verify`): runs an agent process tree under a deny-by-default macOS Seatbelt profile — reads inside `HOME` are denied by default, with the workspace, any declared `--state-dir` or `--allow-read` path, and the agent's own declared key as the carve-outs; writes are confined to the workspace; inherited `*_API_KEY`/`*_TOKEN`/`*_SECRET` env vars are scrubbed to an allowlist; the parent (outside the sandbox) writes an externally anchored, hash-chained, recomputable receipt (`python3 -m deponent shield-verify` returns `ANCHORED_OK` / `MISSING` / `TAMPERED` / `UNANCHORED`, never a false "intact"). Composes with [Agent Safehouse](https://github.com/eugene1g/agent-safehouse) via `--with-safehouse` (Safehouse contains, Deponent records and proves on top). Fail-closed: an invalid path, a missing `sandbox-exec`, or any other unmet precondition means REFUSE — no unsandboxed fallback. Known-not-stopped residuals (workspace hardlinks, cross-process signalling, `sysctl(KERN_PROCARGS2)` env/argv reads, and others): docs/SHIELD.md.
 - `Ledger.load(path).verify()` no longer reports a missing or empty ledger file as intact. It returns `(False, "no testimony: …")` unless you pass an external anchor that commits to an empty chain (`expected_head=Ledger.GENESIS` or `expected_length=0`, e.g. a receipt's `ledger_head` / `ledger_length` for a run that recorded nothing). A ledger that has only recorded in-process is unaffected.
 - `receipts.persist()` raises `ValueError` for such a ledger (one loaded from a missing or empty file) and writes nothing: no receipt, no index line, no `LATEST`. A live ledger that recorded nothing first-hand is not affected: `persist()` still mints its receipt, with `ledger_length` 0 and `ledger_head` GENESIS, and C-CHAIN-INTACT abstains for that run.
 - `claims.attest()` / `Cell.attest()`, claim `C-CHAIN-INTACT`:

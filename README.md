@@ -18,7 +18,7 @@ print(cell.act("exfiltrate", {"to": "evil.example"}).output)
 
 **Refuses:** unknown tools, out-of-sandbox paths, destructive commands; in gate-only mode, interpreters and command chains unless you opt them in.
 
-Why it exists: [docs/WHY.md](docs/WHY.md). Limits: [docs/BOUNDARIES.md](docs/BOUNDARIES.md).
+Why it exists: [docs/WHY.md](docs/WHY.md). Limits: [docs/BOUNDARIES.md](docs/BOUNDARIES.md). Credential shield: [docs/SHIELD.md](docs/SHIELD.md).
 
 ---
 
@@ -59,6 +59,33 @@ Subclass `Cell` and override `_execute` to wrap your own tool surface — gate +
 
 ---
 
+## Credential Shield
+
+`python3 -m deponent shield` runs an agent process tree under a macOS
+Seatbelt profile whose reads are deny-by-default inside `HOME`, while the
+parent (outside the sandbox) writes a hash-chained, externally anchored,
+recomputable receipt of what happened. It is a defense-in-depth **proof layer
+on top of containment** — not a replacement for it. Full scope:
+[docs/SHIELD.md](docs/SHIELD.md) — every protection claim there names its
+test; every documented limit says whether it is pinned by a canary or
+recorded without one.
+
+```sh
+python3 -m deponent shield \
+  --workspace ./project --own-key ~/.ssh/agent_ed25519 \
+  --own-env ANTHROPIC_API_KEY \
+  -- my-agent --do-the-thing
+
+python3 -m deponent shield-verify ~/.deponent/shield-receipts/<id>.jsonl
+```
+
+Containment for local coding agents already exists and is good — the shield
+does not reinvent it. It composes with [Agent Safehouse](https://github.com/eugene1g/agent-safehouse)
+(`--with-safehouse`): Safehouse contains, Deponent records and proves on top
+of it.
+
+---
+
 ## What it does NOT do
 
 Full text: [docs/BOUNDARIES.md](docs/BOUNDARIES.md).
@@ -89,7 +116,7 @@ python3 -m deponent.badge verify --kernel deponent   # exit 0 only when the mark
 
 Any kernel that implements the small adapter and passes the clause set earns the same mark; a kernel that fails gets a red "not conformant" badge and a non-zero exit. The badge is generated locally — no shields.io, no network.
 
-**Seatbelt escape-proofs — two kinds, kept separate so the claim is exactly as strong as the evidence.** (1) **Committed live canaries** (`canaries/CANARIES.md`, J1–J8): network exfil, raw-socket egress, writes outside the sandbox, child-process escape, memory-bomb, and wall-clock runaway — each a real test run against the live macOS sandbox, 0 through; if a canary stops holding, the suite goes red. (2) **Manual development review** — during development Seatbelt bypasses (`osascript 'do shell script'`, `launchctl submit`, loopback `/dev/tcp`, DNS, symlink/hardlink/rename writes-out) were hand-run and blocked; these **shaped the gate denylist and the Seatbelt profile but are not committed tests** — take them as reported, not reproducible from the repo.
+**Seatbelt escape attempts — two kinds, kept separate so the claim is exactly as strong as the evidence.** (1) **Committed live canaries** (`canaries/CANARIES.md`, J1–J8): network exfil, raw-socket egress, writes outside the sandbox, child-process escape, memory-bomb, and wall-clock runaway — each a real test run against the live macOS sandbox, 0 through; if a canary stops holding, the suite goes red. (2) **Manual development review** — during development Seatbelt bypasses (`osascript 'do shell script'`, `launchctl submit`, loopback `/dev/tcp`, DNS, symlink/hardlink/rename writes-out) were hand-run and blocked; these **shaped the gate denylist and the Seatbelt profile but are not committed tests** — take them as reported, not reproducible from the repo.
 
 **Recompute-not-trust evidence records:** the verifier does not read a stored boolean. It re-links the chain from genesis and recomputes the record's content hash over its canonical body. `persist()` runs that verifier on write and raises on failure. Self-reported health is never the evidence.
 

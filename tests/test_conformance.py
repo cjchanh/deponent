@@ -247,7 +247,7 @@ class TestPublicDistributionTruth(unittest.TestCase):
         pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
         version = re.search(r'^version = "([^"]+)"$', pyproject, re.MULTILINE)
         self.assertIsNotNone(version)
-        self.assertEqual(version.group(1), "0.1.2")
+        self.assertEqual(version.group(1), "0.1.3")
         self.assertEqual(deponent.__version__, version.group(1))
         self.assertIn('requires-python = ">=3.10"', pyproject)
         self.assertIn('license = "Apache-2.0"', pyproject)
@@ -269,7 +269,7 @@ class TestPublicDistributionTruth(unittest.TestCase):
 
     def test_spec_matches_released_version_and_public_api(self):
         spec = (REPO_ROOT / "SPEC.md").read_text(encoding="utf-8")
-        self.assertIn("`0.1.2`", spec)
+        self.assertIn("`0.1.3`", spec)
         self.assertNotIn("Version `0.1.0`", spec)
         self.assertNotIn("44 tests pass", spec)
         api_section = spec.split("**Public API**", 1)[1].split("**Stability", 1)[0]
@@ -297,16 +297,39 @@ class TestPublicDistributionTruth(unittest.TestCase):
 
     def test_public_docs_do_not_advertise_sworn_as_current(self):
         from deponent.adapters import BUILTIN_ADAPTERS
-        from deponent.adapters.sworn import SwornAdapter
 
+        try:
+            from deponent.adapters.sworn import SwornAdapter
+        except ModuleNotFoundError as e:
+            # Only the module deliberately excluded from packaging skips this
+            # check. A ModuleNotFoundError for anything else (e.g. a real
+            # import bug reachable from this line) is a genuine failure, not
+            # a packaging fact, and must not be swallowed.
+            if e.name != "deponent.adapters.sworn":
+                raise
+            SwornAdapter = None
+
+        # These do not need SwornAdapter itself, so they run whether or not
+        # the module is packaged — a build that excludes it should not lose
+        # coverage of the registry and the public-doc scan.
         self.assertEqual(tuple(BUILTIN_ADAPTERS), ("deponent",))
-        self.assertNotIn(SwornAdapter, BUILTIN_ADAPTERS.values())
+        if SwornAdapter is not None:
+            self.assertNotIn(SwornAdapter, BUILTIN_ADAPTERS.values())
         for relative in ("README.md", "SECURITY.md", "canaries/CANARIES.md"):
             text = (REPO_ROOT / relative).read_text(encoding="utf-8")
             self.assertNotIn("sworn", text.casefold(), relative)
         spec = (REPO_ROOT / "SPEC.md").read_text(encoding="utf-8")
         if "sworn" in spec.casefold():
             self.assertIn("not a current built-in", spec.casefold())
+
+        if SwornAdapter is None:
+            self.skipTest(
+                "deponent.adapters.sworn is not packaged (excluded from the "
+                "sdist/wheel by pyproject.toml [tool.hatch.build] exclude); "
+                "the assertions above already ran and passed against what "
+                "IS packaged — only the source-text checks against the two "
+                "excluded files are skipped, since they don't exist here"
+            )
         sworn = (REPO_ROOT / "deponent/adapters/sworn.py").read_text(encoding="utf-8")
         wrapper = (REPO_ROOT / "deponent/sworn_adapter.py").read_text(encoding="utf-8")
         self.assertIn("legacy", sworn.casefold())

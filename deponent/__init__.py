@@ -16,7 +16,7 @@ from .ledger import Ledger
 from .profiles import build_cell, build_gate
 from .receipts import persist, verify, write_operator_receipt
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 __all__ = [
     "Cell",
