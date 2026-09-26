@@ -167,6 +167,59 @@ class TestProfileContent(unittest.TestCase):
             self.assertIn(f'(allow file-write* (subpath "{cfg.workspace.resolve()}"))', prof)
 
 
+class TestAuditSurfaceOrdering(unittest.TestCase):
+    """S1 regression: audit dirs are READ- and write-denied, and those denies come
+    after every allow (SBPL last-match-wins), in both emitters."""
+
+    def _idx(self, lines: list[str], needle: str) -> int:
+        hits = [i for i, l in enumerate(lines) if needle in l]
+        self.assertTrue(hits, f"missing rule containing {needle!r}")
+        return hits[-1]
+
+    def test_standalone_profile_denies_audit_read_and_write_last(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            cfg = _cfg(tmp)
+            lines = build_profile(cfg).splitlines()
+            rdir, adir = str(Path(cfg.receipt_dir).resolve()), str(Path(cfg.anchor_dir).resolve())
+            r = self._idx(lines, f'(deny file-read* file-write* (subpath "{rdir}"))')
+            a = self._idx(lines, f'(deny file-read* file-write* (subpath "{adir}"))')
+            last_allow = max(i for i, l in enumerate(lines) if l.startswith("(allow"))
+            self.assertGreater(min(r, a), last_allow, "audit denies must follow every allow")
+
+    def test_overlay_denies_audit_after_own_keys(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            cfg = _cfg(tmp)
+            lines = shield.build_safehouse_overlay(cfg).splitlines()
+            own = self._idx(lines, "(allow file-read* (literal")
+            adir = str(Path(cfg.anchor_dir).resolve())
+            a = self._idx(lines, f'(deny file-read* file-write* (subpath "{adir}"))')
+            self.assertGreater(a, own, "overlay audit denies must follow own-key allows")
+
+
+class TestPathHelpers(unittest.TestCase):
+    """Direct tests of the two path predicates the preflight relies on, so the
+    ancestor fix is proven on its own, not only through a refusal that another
+    check could also produce (found by the cross-family review, 2026-09-26)."""
+
+    def test_reopens_true_for_home_parent_and_root(self):
+        home = Path("/a/b/home")
+        for surface in (home, Path("/a/b"), Path("/a"), Path("/")):
+            self.assertTrue(shield._reopens(surface, home), surface)
+
+    def test_reopens_false_for_children_and_siblings(self):
+        home = Path("/a/b/home")
+        for surface in (Path("/a/b/home/work"), Path("/a/b/other"), Path("/elsewhere")):
+            self.assertFalse(shield._reopens(surface, home), surface)
+
+    def test_overlaps_both_directions_and_disjoint(self):
+        self.assertTrue(shield._overlaps(Path("/x/y"), Path("/x")))
+        self.assertTrue(shield._overlaps(Path("/x"), Path("/x/y")))
+        self.assertTrue(shield._overlaps(Path("/x"), Path("/x")))
+        self.assertFalse(shield._overlaps(Path("/x/y"), Path("/x/z")))
+
+
 class TestEnvScrub(unittest.TestCase):
     def test_drops_secret_shaped_names_keeps_allowlist(self):
         with tempfile.TemporaryDirectory() as d:
@@ -290,6 +343,60 @@ class TestPreflightRefusals(unittest.TestCase):
                                anchor_dir=tmp / "anchors", receipt_dir=tmp / "receipts")
             with self.assertRaises(ShieldError):
                 shield.preflight(cfg)
+
+    # -- S1 regressions (found by the cross-family dream-loop review, 2026-09-26) --
+    def _base(self, tmp: Path, **kw) -> ShieldConfig:
+        home = _fake_home(tmp)
+        work = tmp / "work"; work.mkdir(exist_ok=True)
+        base = dict(command=["true"], workspace=work, home=home, allow_hardlinks=True,
+                    anchor_dir=tmp / "anchors", receipt_dir=tmp / "receipts")
+        base.update(kw)
+        return ShieldConfig(**base)
+
+    def test_refuses_workspace_root(self):
+        """S1: workspace "/" slipped past a string-prefix ancestor check and its
+        subpath read-allow re-opened the whole filesystem after the HOME deny."""
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaisesRegex(ShieldError, "^workspace .*re-open the whole home directory"):
+                shield.preflight(self._base(Path(d), workspace=Path("/")))
+
+    def test_refuses_allow_read_root(self):
+        """Ripple of the same S1: --allow-read / re-opens HOME at the same step."""
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaisesRegex(ShieldError, "^--allow-read .*re-open the whole home directory"):
+                shield.preflight(self._base(Path(d), allow_reads=(Path("/"),)))
+
+    def test_refuses_state_dir_ancestor_of_home(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            with self.assertRaisesRegex(ShieldError, "^--state-dir .*re-open the whole home directory"):
+                shield.preflight(self._base(tmp, state_dirs=(tmp,)))  # tmp contains home
+
+    def test_refuses_receipt_dir_inside_workspace(self):
+        """S1: an audit dir the agent can reach lets it touch its own evidence."""
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            with self.assertRaisesRegex(ShieldError, "^receipt dir .*overlaps workspace .*reach its own evidence"):
+                shield.preflight(self._base(tmp, receipt_dir=tmp / "work" / "receipts"))
+
+    def test_refuses_anchor_dir_containing_workspace(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            with self.assertRaisesRegex(ShieldError, "^anchor dir .*overlaps workspace .*reach its own evidence"):
+                shield.preflight(self._base(tmp, anchor_dir=tmp))  # tmp contains work
+
+    def test_refuses_own_key_inside_anchor_dir(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            (tmp / "anchors").mkdir()
+            (tmp / "anchors" / "k").write_text("FAKE")
+            with self.assertRaisesRegex(ShieldError, "^anchor dir .*overlaps --own-key .*reach its own evidence"):
+                shield.preflight(self._base(tmp, own_keys=(tmp / "anchors" / "k",)))
+
+    def test_positive_control_clean_config_passes(self):
+        """Anti-vacuity: the refusals above are specific, not a blanket refusal."""
+        with tempfile.TemporaryDirectory() as d:
+            shield.preflight(self._base(Path(d)))  # must not raise
 
     def test_with_safehouse_missing_binary_refuses(self):
         with tempfile.TemporaryDirectory() as d:

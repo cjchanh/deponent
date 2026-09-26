@@ -7,8 +7,9 @@ receipts** of what the agent attempted and what was denied.
 
 > **This is a defense-in-depth _proof_ layer, not a credential-theft prevention
 > system.** Read the boundaries below before you rely on it. Every protection
-> claim maps to a named canary in `tests/test_shield_live.py`; every honest limit
-> is pinned by a `KNOWN-NOT-STOPPED` canary so it cannot silently change.
+> claim maps to a named test. Of the limits we know about, two are pinned by
+> `KNOWN-NOT-STOPPED` canaries so they cannot silently change; the rest are
+> design residuals documented below **without** a canary. Treat those as not stopped.
 
     python3 -m deponent shield \
       --workspace ./project --own-key ~/.ssh/agent_ed25519 \
@@ -64,11 +65,14 @@ Contribution → canary map:
 | Reach recorded, or **UNAVAILABLE** — never empty-and-OK | `C9_receipt_reach_is_events_or_unavailable` |
 | Receipt is anchored and recomputable; tamper/truncate/re-chain caught | `C11_verify_end_to_end`, `TestReceiptVerify::*` |
 | Fail-closed: invalid path or missing `sandbox-exec` ⇒ REFUSE, child never starts | `C10_refuse_invalid_path`, `C10_refuse_missing_sandbox_exec` |
+| A read surface (workspace, `--state-dir`, `--allow-read`) that is HOME or an ancestor of HOME, **including `/`** ⇒ REFUSE | `test_refuses_workspace_root`, `test_refuses_allow_read_root`, `test_refuses_state_dir_ancestor_of_home` |
+| Receipt and anchor dirs are **read- and write-denied** to the agent (last rule, so no allow re-opens them); overlap with anything the agent can reach ⇒ REFUSE | `A1_audit_files_unreadable_by_child`, `TestAuditSurfaceOrdering::*`, `test_refuses_receipt_dir_inside_workspace`, `test_refuses_anchor_dir_containing_workspace`, `test_refuses_own_key_inside_anchor_dir` |
 
-## What it does NOT stop (KNOWN-NOT-STOPPED — pinned by canaries)
+## What it does NOT stop
 
-These are **design residuals**, not bugs. Each is pinned so it cannot be
-over-claimed or silently regress.
+These are **design residuals**, not bugs. **Only the first two are pinned by
+canaries**; the others are documented here with no canary. Treat every row as
+not stopped.
 
 | Residual | Canary |
 |---|---|
@@ -76,7 +80,9 @@ over-claimed or silently regress.
 | **Signalling a process outside the sandbox** is NOT blocked on macOS 27 (`(deny signal (target others))` is ineffective here). | `C8_signal_parent_KNOWN_NOT_STOPPED` |
 | The agent's **own declared key can still be exfiltrated over the network** — it can read it (by design) and it needs the network for its model. Read-deny protects *other* secrets, not the one you hand it. | (design; see below) |
 | **Keychain beyond the default mach-lookup deny** — the deny flips a probe's `OSStatus -25300 → -50`, but this is not a proof that all keychain access paths are closed. | §Empirical notes |
-| Anything the base `(allow default)` permits, and any secret **outside HOME** or in a path re-opened via `--allow-read`. | design |
+| Anything the base `(allow default)` permits, and any secret **outside HOME**, including external volumes and `/Users/Shared`, or in a path re-opened via `--allow-read`. | design |
+| Declaring an agent socket (e.g. `--own-env SSH_AUTH_SOCK`) grants key **use** without key **read**: the agent can sign with every key that socket holds. | design |
+| The exec denies on `osascript` / `open` / `launchctl` / `security` match **literal paths only**, so they are speed bumps. The controls that matter are the mach-lookup and AppleEvent denies. Processes started on the agent's behalf by system services run outside the sandbox. | design (no canary) |
 
 **We do not claim, anywhere:** "prevents credential theft", "stops malicious
 agents", "escape-proof", "protects the Keychain" (beyond the tested default

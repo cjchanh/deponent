@@ -252,12 +252,19 @@ def build_profile(cfg: ShieldConfig) -> str:
     )
     L.append('(allow file-write-data (regex #"^/dev/tty"))')
 
-    # 10. explicit deny-write of the parent's audit surfaces (also covered by the
-    #     default write-deny, but stated so the intent is auditable)
-    L.append(f'(deny file-write* (subpath "{receipt_dir}"))')
-    L.append(f'(deny file-write* (subpath "{anchor_dir}"))')
+    # 10. the parent's audit surfaces: deny READ and write, LAST, so no allow
+    #     surface above (workspace/state/allow-read/own-key) can re-open them.
+    #     Read-deny also blocks creating a hardlink to them from inside.
+    L.extend(_audit_surface_denies(receipt_dir, anchor_dir))
 
     return "\n".join(L) + "\n"
+
+
+def _audit_surface_denies(receipt_dir: str, anchor_dir: str) -> list[str]:
+    return [
+        f'(deny file-read* file-write* (subpath "{receipt_dir}"))',
+        f'(deny file-read* file-write* (subpath "{anchor_dir}"))',
+    ]
 
 
 def validate_sbpl_path_lenient(raw: str | os.PathLike) -> str:
@@ -420,10 +427,10 @@ def build_safehouse_overlay(cfg: ShieldConfig) -> str:
         L.append(f'(deny process-exec* (literal "{binpath}"))')
     for c in catalog:
         L.append(f'(deny file-read* (subpath "{c}"))')
-    L.append(f'(deny file-write* (subpath "{receipt_dir}"))')
-    L.append(f'(deny file-write* (subpath "{anchor_dir}"))')
-    for k in own_keys:  # LAST -> overrides catalog denies above
+    for k in own_keys:  # after the catalog -> overrides the catalog denies above
         L.append(f'(allow file-read* (literal "{k}"))')
+    # audit surfaces LAST: nothing above (incl. an own-key carve-out) re-opens them
+    L.extend(_audit_surface_denies(receipt_dir, anchor_dir))
     return "\n".join(L) + "\n"
 
 
@@ -468,13 +475,34 @@ def preflight(cfg: ShieldConfig) -> None:
     home = Path(cfg.home).expanduser().resolve()
     if not ws.is_dir():
         raise ShieldError(f"workspace {ws} is not a directory; refusing.")
-    # Workspace must not BE home or an ancestor of home, or the workspace read-allow
-    # would re-open all of HOME (defeating deny-by-default).
-    if ws == home or home == ws or str(home).startswith(str(ws) + os.sep):
-        raise ShieldError(
-            f"workspace {ws} is HOME or an ancestor of HOME {home}; the read-allow "
-            "would re-open the whole home directory. Refusing."
-        )
+    # No read-allow surface (workspace, --state-dir, --allow-read) may BE HOME or an
+    # ancestor of it: its subpath allow would re-open all of HOME (defeating
+    # deny-by-default). Path semantics, not string prefixes — a string check
+    # missed "/" (str("/") + "/" == "//" prefixes nothing).
+    surfaces = [("workspace", ws)]
+    surfaces += [("--state-dir", Path(p).expanduser().resolve()) for p in cfg.state_dirs]
+    surfaces += [("--allow-read", Path(p).expanduser().resolve()) for p in cfg.allow_reads]
+    for label, surface in surfaces:
+        if _reopens(surface, home):
+            raise ShieldError(
+                f"{label} {surface} is HOME or an ancestor of HOME {home}; its read-allow "
+                "would re-open the whole home directory. Refusing."
+            )
+    # The parent's audit surfaces (receipts, anchors) must not overlap, in either
+    # direction, any DECLARED surface the agent can reach: workspace, state dirs,
+    # allow-reads, child tmp, own keys. Paths the base profile allows by default are
+    # not enumerated here; the final profile rules deny the audit dirs outright.
+    audit = [("receipt dir", Path(cfg.receipt_dir).expanduser().resolve()),
+             ("anchor dir", Path(cfg.anchor_dir).expanduser().resolve())]
+    child_tmp = (ws / ".shield-tmp").resolve()
+    own = [("--own-key", Path(k).expanduser().resolve()) for k in cfg.own_keys]
+    for a_label, a_path in audit:
+        for s_label, s_path in surfaces + [("child tmp", child_tmp)] + own:
+            if _overlaps(a_path, s_path):
+                raise ShieldError(
+                    f"{a_label} {a_path} overlaps {s_label} {s_path}; the agent could "
+                    "reach its own evidence. Refusing."
+                )
 
     # Own-key existence (unless explicitly allowed missing).
     for k in cfg.own_keys:
@@ -513,6 +541,17 @@ def preflight(cfg: ShieldConfig) -> None:
 
     if cfg.with_safehouse:
         _resolve_safehouse_bin(cfg)  # raises if missing
+
+
+def _reopens(surface: Path, home: Path) -> bool:
+    """True if a subpath read-allow on `surface` would re-open all of HOME:
+    surface is HOME itself or one of its ancestors (including "/")."""
+    return surface == home or surface in home.parents
+
+
+def _overlaps(a: Path, b: Path) -> bool:
+    """True if either path contains the other (or they are equal)."""
+    return a == b or a in b.parents or b in a.parents
 
 
 def _hardlink_offenders(root: Path) -> list[str]:

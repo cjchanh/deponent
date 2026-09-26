@@ -265,6 +265,26 @@ class TestShieldCanaries(unittest.TestCase):
             os.environ.pop("FAKE_SECRET_IN_PARENT", None)
 
     # -- FD leak: child must not inherit a parent fd on a fake key -------------
+    # -- A1 (S1 regression): the child cannot read the parent's audit files -----
+    def test_A1_audit_files_unreadable_by_child(self):
+        """Before the fix, audit dirs outside HOME were only write-denied, so the
+        agent could read (and, via a hardlink, reach) its own evidence."""
+        cfg = _cfg(self.tmp, self.home, self.work)
+        anchor = Path(cfg.anchor_dir); anchor.mkdir(parents=True, exist_ok=True)
+        fake = anchor / "session.anchor.json"
+        fake.write_text("FAKE-ANCHOR-CONTENTS")
+        r = _run_under_profile(cfg, ["/bin/cat", str(fake)])
+        self.assertNotIn("FAKE-ANCHOR-CONTENTS", r.stdout)
+        self.assertIn("Operation not permitted", r.stderr)
+        # the child also cannot hardlink the audit file into its workspace
+        r2 = _run_under_profile(cfg, ["/bin/ln", str(fake), str(self.work / "grab")])
+        self.assertNotEqual(r2.returncode, 0, "hardlinking an audit file must fail")
+        self.assertFalse((self.work / "grab").exists())
+        # positive control: the same child CAN read its own workspace
+        (self.work / "ok.txt").write_text("WORKSPACE-OK")
+        r3 = _run_under_profile(cfg, ["/bin/cat", str(self.work / "ok.txt")])
+        self.assertIn("WORKSPACE-OK", r3.stdout)
+
     def test_FD_not_inherited(self):
         fake_key = self.tmp / "parent_fd_key"
         fake_key.write_text("FAKE-KEY-FOR-TEST-fd")
