@@ -59,12 +59,14 @@ jobs:
 
       # Same guard as C4, for the credential shield's live canaries: Linux
       # skips (no Seatbelt); macOS must actually run them, never silently skip.
+      # The one allowed skip is the optional Agent Safehouse compose canaries,
+      # which skip when the `safehouse` binary is not installed on the runner.
       - name: macOS shield tests must not skip
         if: matrix.os == 'macos-latest'
         run: |
           set -o pipefail
           python -m pytest -rs --tb=no tests/test_shield_live.py | tee shield-macos.txt
-          if grep -E '^SKIPPED' shield-macos.txt; then
+          if grep -E '^SKIPPED' shield-macos.txt | grep -vF 'safehouse not on PATH'; then
             echo "shield-skip FAIL: credential shield tests skipped on macOS"
             exit 1
           fi
