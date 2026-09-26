@@ -2,12 +2,15 @@
 """
 shield.py — the credential shield: run an agent as a whole process tree under a
 macOS Seatbelt profile that reads deny-by-default inside HOME, with the PARENT
-(outside the sandbox) writing hash-chained, externally anchored, recomputable
-receipts of what the agent attempted and what was denied.
+(outside the sandbox) writing a hash-chained, externally anchored, recomputable
+receipt of the run: argv, profile sha256, own-key/own-env declarations, dropped
+env NAMES only, catalog size and exit status. Denied reads are captured only
+where the OS logs them (usually UNAVAILABLE on macOS 27).
 
 This is a DEFENSE-IN-DEPTH proof layer, not a credential-theft prevention system.
-Read docs/SHIELD.md for the honest "what it stops / what it does not stop" list;
-every claim there maps to a canary in tests/test_shield_live.py.
+Read docs/SHIELD.md for the honest "what it stops / what it does not stop" list:
+every protection claim there names the test behind it; three known limits are
+pinned by KNOWN-NOT-STOPPED canaries and the rest are documented without one.
 
 Boundary with the rest of the kernel:
   - gate.py governs the SHELL + PATH surface (which programs, which paths).
@@ -715,12 +718,16 @@ def run_shield(cfg: ShieldConfig) -> dict:
 
 
 def _capture_reach(before: float, after: float, tag: str, catalog: list[str]) -> object:
-    """Return a list of observed catalog-read deny events, or the string
-    "UNAVAILABLE" if the positive control was not observed at BOTH brackets.
+    """Return a NON-EMPTY list of observed catalog-read deny events, or the string
+    "UNAVAILABLE". Never an empty list.
 
     Honest by construction: sandbox-exec custom-profile denies are not reliably
     emitted to the unified log on macOS 27, so this typically returns UNAVAILABLE.
-    It NEVER returns an empty list reported as success."""
+    UNAVAILABLE is returned when the log tool is absent, when the bracketed positive
+    control was not observed at BOTH brackets, OR when the control WAS observed but
+    no catalog denial was captured in the window — an empty capture cannot be
+    reported as observation (that would be the "empty-and-OK" the shield forbids),
+    so it collapses to UNAVAILABLE."""
     if not _log_show_available():
         return "UNAVAILABLE"
     control_hits = _query_log_denies(before, tag)
@@ -735,7 +742,7 @@ def _capture_reach(before: float, after: float, tag: str, catalog: list[str]) ->
         if after and _line_epoch(line) and _line_epoch(line) > after + 2:
             continue
         for c in catalog:
-            if c in line:
+            if _line_mentions_catalog_path(line, c):
                 events.append({"path": c, "verdict": "deny"})
                 break
     # de-dup while preserving order
@@ -745,7 +752,42 @@ def _capture_reach(before: float, after: float, tag: str, catalog: list[str]) ->
         if e["path"] not in seen:
             seen.add(e["path"])
             uniq.append(e)
-    return uniq
+    # An empty capture is NOT observation: controls were seen but no catalog denial
+    # was matched in the window. Report UNAVAILABLE, never an empty "OBSERVED".
+    return uniq if uniq else "UNAVAILABLE"
+
+
+#: Characters that legitimately terminate a path token in a unified-log deny line.
+_PATH_BOUNDARY = frozenset({"/", '"', "'", " ", "\t", "\n", ")", ","})
+
+#: Characters that may legitimately PRECEDE a path token (it must never follow a
+#: path character, or `/Volumes/Backup/Users/me/.ssh` would match `/Users/me/.ssh`).
+_PATH_LEADING_BOUNDARY = frozenset({" ", "\t", "\n", '"', "'", "(", "=", ":"})
+
+
+def _line_mentions_catalog_path(line: str, c: str) -> bool:
+    """True iff catalog path ``c`` appears in ``line`` as a whole path token.
+
+    LEADING: the occurrence starts at the beginning of the line or right after
+    whitespace, a quote, ``(``, ``=`` or ``:`` — never after a path character, so a
+    path that merely ENDS in a copy of HOME (``/Volumes/Backup/Users/me/.ssh/id``,
+    ``/tmp/x/Users/me/.ssh``) is not credited to ``/Users/me/.ssh``.
+
+    TRAILING: it is followed by a path separator, a quote, whitespace, ``)``/``,``
+    or the end of the line, so a sibling like ``<c>2`` or ``<c>_backup`` is not
+    credited to ``<c>``, while an exact hit and any subpath (``<c>/id_x``) are."""
+    n = len(c)
+    start = 0
+    while True:
+        i = line.find(c, start)
+        if i < 0:
+            return False
+        end = i + n
+        leading_ok = i == 0 or line[i - 1] in _PATH_LEADING_BOUNDARY
+        trailing_ok = end == len(line) or line[end] in _PATH_BOUNDARY
+        if leading_ok and trailing_ok:
+            return True
+        start = i + 1
 
 
 def _line_epoch(line: str) -> float | None:

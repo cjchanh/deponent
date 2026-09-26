@@ -2,12 +2,17 @@
 
 Run an untrusted coding agent as a whole process tree under a macOS Seatbelt
 profile whose **reads are deny-by-default inside HOME**, while the parent process
-(outside the sandbox) writes **hash-chained, externally anchored, recomputable
-receipts** of what the agent attempted and what was denied.
+(outside the sandbox) writes a **hash-chained, externally anchored, recomputable
+receipt**. Every receipt records the launch (argv, the profile sha256, the
+`--own-key`/`--own-env` declarations, the **dropped env NAMES only**, and the
+catalog size) and the outcome (the child's exit status, always, including on
+crash). Attempted **denied reads** are captured only where the OS logs them; on
+macOS 27 that is usually **`UNAVAILABLE`** (see *Reach capture* below) — the
+kernel still enforces every deny, whether or not it is logged.
 
 > **This is a defense-in-depth _proof_ layer, not a credential-theft prevention
 > system.** Read the boundaries below before you rely on it. Every protection
-> claim maps to a named test. Of the limits we know about, two are pinned by
+> claim maps to a named test. Of the limits we know about, three are pinned by
 > `KNOWN-NOT-STOPPED` canaries so they cannot silently change; the rest are
 > design residuals documented below **without** a canary. Treat those as not stopped.
 
@@ -45,8 +50,8 @@ Contribution → canary map:
 |---|---|
 | Anchored, recomputable receipt; verify is honest | `C11_verify_end_to_end`, `TestReceiptVerify::*` |
 | Reach capture with bracketed controls, self-reports UNAVAILABLE | `C9_receipt_reach_is_events_or_unavailable` |
-| Keychain mach-lookup denied by default | (profile) `test_keychain_and_side_channel_denies` + empirical §Empirical notes |
-| AppleEvents / LaunchServices / process-info denied | `test_keychain_and_side_channel_denies`, `C12_parent_env_not_readable` |
+| Keychain mach-lookup denied by default (live probe: `-25300 → -50`) | `C13_keychain_securityserver_deny_flips_status`, (profile) `test_keychain_and_side_channel_denies` |
+| AppleEvents / LaunchServices / process-info deny **rules emitted** | `test_keychain_and_side_channel_denies` (see the process-info residual under "What it does NOT stop") |
 | Env scrubbed to an allowlist, names-only receipt | `C6_env_secret_scrubbed`, `TestEnvScrub::*` |
 
 ## What it stops (each maps to a canary)
@@ -59,8 +64,8 @@ Contribution → canary map:
 | Writes are confined to the workspace (outside denied) | `C5_writes_confined` |
 | Inherited env secrets (`*_API_KEY`/`*_TOKEN`/`*_SECRET`) dropped unless declared | `C6_env_secret_scrubbed` |
 | `osascript` / `open` / `launchctl` / `security` exec denied | `C7_exec_denied` |
-| Keychain mach-lookup (`com.apple.SecurityServer`) denied by default | §Empirical notes; profile test |
-| Parent/other-process env not readable via `process-info` | `C12_parent_env_not_readable` (see note) |
+| Keychain mach-lookup (`com.apple.SecurityServer`) denied by default; a live `SecItemCopyMatching` probe flips `-25300 → -50` | `C13_keychain_securityserver_deny_flips_status` |
+| The setuid-root `/bin/ps` fails to **exec** under the sandbox — a platform restriction on setuid exec, **not** a shield rule (`EXEC_DENY` does not list `ps`), so it leaks nothing; but a non-setuid tool that reads process info directly is **not** stopped (see the sysctl residual below) | `C12_parent_env_readable_via_sysctl_KNOWN_NOT_STOPPED` (secondary assertion) |
 | Child does not inherit parent file descriptors (`close_fds`) | `FD_not_inherited` |
 | Reach recorded, or **UNAVAILABLE** — never empty-and-OK | `C9_receipt_reach_is_events_or_unavailable` |
 | Receipt is anchored and recomputable; tamper/truncate/re-chain caught | `C11_verify_end_to_end`, `TestReceiptVerify::*` |
@@ -70,7 +75,7 @@ Contribution → canary map:
 
 ## What it does NOT stop
 
-These are **design residuals**, not bugs. **Only the first two are pinned by
+These are **design residuals**, not bugs. **Only the first three are pinned by
 canaries**; the others are documented here with no canary. Treat every row as
 not stopped.
 
@@ -78,6 +83,7 @@ not stopped.
 |---|---|
 | A **pre-existing workspace hardlink** to a protected file is READABLE (Seatbelt keys on the path). Mitigation: preflight refuses `st_nlink>1` unless `--allow-hardlinks`. | `C4_workspace_hardlink_is_readable_KNOWN_NOT_STOPPED` |
 | **Signalling a process outside the sandbox** is NOT blocked on macOS 27 (`(deny signal (target others))` is ineffective here). | `C8_signal_parent_KNOWN_NOT_STOPPED` |
+| **Another same-uid process's exec-time environment AND argv are READABLE via `sysctl(KERN_PROCARGS2)`.** `(deny process-info* (target others))` does not block it, a `(deny sysctl-read (sysctl-name "kern.procargs2"))` filter does not block it, and a blanket `(deny sysctl-read)` breaks the child. An agent can therefore read the environment (including inherited secrets) and command line of other processes owned by the same user. Do not rely on the shield to hide secrets held in any same-uid process's environment; scrub them before launch. | `C12_parent_env_readable_via_sysctl_KNOWN_NOT_STOPPED` |
 | The agent's **own declared key can still be exfiltrated over the network** — it can read it (by design) and it needs the network for its model. Read-deny protects *other* secrets, not the one you hand it. | (design; see below) |
 | **Keychain beyond the default mach-lookup deny** — the deny flips a probe's `OSStatus -25300 → -50`, but this is not a proof that all keychain access paths are closed. | §Empirical notes |
 | Anything the base `(allow default)` permits, and any secret **outside HOME**, including external volumes and `/Users/Shared`, or in a path re-opened via `--allow-read`. | design |
@@ -106,10 +112,14 @@ appended **last**, so its denies (the always-deny credential catalog minus your
 `--own-key` carve-outs, and the side-channel denies) narrow Safehouse's allows.
 Credit and thanks to Agent Safehouse for the base policy.
 
-Live compose canaries: `TestSafehouseCompose::*` (skipped unless `safehouse` is on
-PATH). They prove: workspace read/write, catalog key denied, own-key carve-out
-survives composition, the overlay's side-channel denies take effect, and the
-receipt verifies `ANCHORED_OK`.
+Live compose canaries: `TestSafehouseCompose::*` (run when `safehouse` is on PATH;
+safehouse 0.12.0 is present here). They prove: workspace read/write, the catalog
+key denied under the composed policy, the own-key carve-out surviving composition,
+and the receipt verifying `ANCHORED_OK`. The overlay's side-channel denies (keychain
+mach-lookup, AppleEvents, LaunchServices, process-info) are proven **present** in
+the composed overlay by the profile test `TestSafehouseOverlay::test_overlay_has_side_channel_denies`;
+their runtime effect is the same as in standalone mode (e.g. the keychain flip in
+`C13`).
 
 ## Receipts and verification
 
@@ -138,8 +148,11 @@ anchor defeats an in-sandbox agent, not a host-level compromise.
 Reach events are denied catalog reads pulled from the macOS unified log. Before
 **and** after the agent runs, the shield triggers a known-denied read of a
 shield-owned sentinel under the *same* profile (bracketed positive controls). If
-**either** control deny is not observed in the log, the receipt records
-`reach_events: "UNAVAILABLE"` — **never "none"**.
+**either** control deny is not observed in the log — **or** the controls are seen
+but no catalog denial is matched in the window — the receipt records
+`reach_events: "UNAVAILABLE"` — **never "none"** and never an empty set reported as
+`OBSERVED`. When the value is `OBSERVED` it is always backed by `reach_event`
+records (pinned by `C9_receipt_reach_is_events_or_unavailable`).
 
 On macOS 27, `sandbox-exec` custom-profile denies are **not reliably emitted** to
 the unified log (system App-Sandbox denies are; short-lived `sandbox-exec` child
@@ -164,8 +177,14 @@ whether it is logged; reach capture is an *audit* signal, not the control.
 - **`(deny signal (target others))` does not block a real signal** to an outside
   process on this host.
 - **`(deny sysctl-read)` breaks normal tools** (e.g. `python3`), so it is **not**
-  used; `(deny process-info* (target others))` alone covers the process-info path
-  without breaking the child.
+  used. `(deny process-info* (target others))` is emitted, but it does **not** stop
+  a direct `sysctl(KERN_PROCARGS2, pid)` read of another same-uid process's
+  exec-time environment and argv, and neither does a `(sysctl-name "kern.procargs2")`
+  filter. (The setuid-root `/bin/ps` also fails here, but that is the platform
+  refusing to *exec* a setuid binary under the sandbox — not this rule, and not a
+  path the agent needs.) That leak is a documented residual (see "What it does NOT
+  stop"): scrub secrets from any same-uid process's environment before launch rather
+  than relying on the shield to hide them.
 - **Children inherit the sandbox** (Seatbelt applies to the whole process tree).
 
 ## Strategic risk

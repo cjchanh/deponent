@@ -166,6 +166,28 @@ class TestProfileContent(unittest.TestCase):
             self.assertIn("(deny file-write*)", prof)
             self.assertIn(f'(allow file-write* (subpath "{cfg.workspace.resolve()}"))', prof)
 
+    def test_missing_catalog_path_still_emits_deny(self):
+        """A catalog entry whose path does not exist on this HOME still gets its
+        deny rule emitted (the rule is harmless if the path is absent, and it must
+        be present so a path created later is denied). This HOME has only `.myown`,
+        so `.ssh` / `.aws` / `.codex` do not exist here."""
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            home = tmp / "bare_home"
+            (home / ".myown").mkdir(parents=True)
+            (home / ".myown" / "key").write_text("FAKE-KEY-FOR-TEST-own")
+            cfg = _cfg(tmp, home=home)
+            home_abs = home.resolve()
+            prof = build_profile(cfg)
+            catalog = resolve_catalog(home)
+            for rel in (".ssh", ".aws", ".codex"):
+                target = home_abs / rel
+                self.assertFalse(target.exists(), f"{rel} must be absent for this test")
+                self.assertIn(f'(deny file-read* (subpath "{target}"))', prof,
+                              f"deny for nonexistent catalog path {rel} must still be emitted")
+            # catalog size is fixed by CATALOG_RELPATHS, independent of what exists
+            self.assertEqual(len(catalog), len(shield.CATALOG_RELPATHS))
+
 
 class TestAuditSurfaceOrdering(unittest.TestCase):
     """S1 regression: audit dirs are READ- and write-denied, and those denies come
@@ -409,6 +431,194 @@ class TestPreflightRefusals(unittest.TestCase):
                                anchor_dir=tmp / "anchors", receipt_dir=tmp / "receipts")
             with self.assertRaises(ShieldError):
                 shield.preflight(cfg)
+
+    def test_refuses_unwritable_anchor_dir(self):
+        """An anchor dir the parent cannot write must HALT (unless --no-anchor):
+        the anchor is the one artifact the agent cannot forge, so we refuse rather
+        than run without it silently. Made unwritable by chmod on an owned dir."""
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            home = _fake_home(tmp)
+            work = tmp / "work"; work.mkdir()
+            adir = tmp / "anchors"; adir.mkdir()
+            os.chmod(adir, 0o500)  # r-x: owner cannot create files inside
+            cfg = ShieldConfig(command=["true"], workspace=work, home=home,
+                               own_keys=(home / ".myown" / "key",),
+                               anchor_dir=adir, receipt_dir=tmp / "receipts")
+            try:
+                with self.assertRaisesRegex(ShieldError, "anchor dir .*not writable"):
+                    shield.preflight(cfg)
+            finally:
+                os.chmod(adir, 0o700)  # restore so TemporaryDirectory can clean up
+
+    def test_no_anchor_skips_the_writable_anchor_requirement(self):
+        """--no-anchor is the sanctioned escape from the unwritable-anchor HALT:
+        the same unwritable anchor dir passes preflight when --no-anchor is set."""
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            home = _fake_home(tmp)
+            work = tmp / "work"; work.mkdir()
+            adir = tmp / "anchors"; adir.mkdir()
+            os.chmod(adir, 0o500)
+            cfg = ShieldConfig(command=["true"], workspace=work, home=home,
+                               own_keys=(home / ".myown" / "key",),
+                               anchor_dir=adir, receipt_dir=tmp / "receipts",
+                               no_anchor=True)
+            try:
+                shield.preflight(cfg)  # must not raise
+            finally:
+                os.chmod(adir, 0o700)
+
+
+class TestNonMacosRefusal(unittest.TestCase):
+    """Fail-closed on a non-macOS host: preflight refuses before any child starts.
+    Runs on every platform because it patches sys.platform rather than the host."""
+
+    def test_refuses_non_darwin_platform(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            home = _fake_home(tmp)
+            work = tmp / "work"; work.mkdir()
+            cfg = ShieldConfig(command=["true"], workspace=work, home=home,
+                               own_keys=(home / ".myown" / "key",),
+                               anchor_dir=tmp / "anchors", receipt_dir=tmp / "receipts")
+            orig = shield.sys.platform
+            try:
+                shield.sys.platform = "linux"
+                with self.assertRaisesRegex(ShieldError, "requires macOS Seatbelt"):
+                    shield.preflight(cfg)
+            finally:
+                shield.sys.platform = orig
+
+
+class TestReachCaptureHonesty(unittest.TestCase):
+    """Regression for the 2026-09-26 defect: reach capture must never report an
+    empty set as observation. `_capture_reach` returns a NON-EMPTY list or the
+    string UNAVAILABLE — never an empty list (which run_shield would have mapped
+    to a hollow "OBSERVED"). Pure function; no sandbox needed."""
+
+    def setUp(self):
+        self._log_ok = shield._log_show_available
+        self._query = shield._query_log_denies
+        shield._log_show_available = lambda: True
+
+    def tearDown(self):
+        shield._log_show_available = self._log_ok
+        shield._query_log_denies = self._query
+
+    def test_controls_observed_but_no_catalog_match_is_unavailable(self):
+        # control query (tag != "") returns >=2 hits; catalog scan (tag == "") empty
+        shield._query_log_denies = lambda start, tag: (["deny( %s" % tag] * 2 if tag else [])
+        out = shield._capture_reach(0.0, 0.0, "sometag", ["/home/x/.ssh"])
+        self.assertEqual(out, "UNAVAILABLE",
+                         "controls observed + no catalog match must be UNAVAILABLE, not []")
+
+    def test_controls_not_observed_is_unavailable(self):
+        shield._query_log_denies = lambda start, tag: []  # fewer than 2 control hits
+        self.assertEqual(shield._capture_reach(0.0, 0.0, "sometag", ["/home/x/.ssh"]), "UNAVAILABLE")
+
+    def test_real_catalog_denial_is_a_nonempty_list(self):
+        # positive control: a matching catalog line yields a non-empty observation
+        cat = "/home/x/.ssh"
+        def q(start, tag):
+            if tag:
+                return ["deny( file-read* %s" % tag] * 2
+            return [f"2026-01-01 00:00:00 deny( file-read* {cat} )"]
+        shield._query_log_denies = q
+        out = shield._capture_reach(0.0, 0.0, "sometag", [cat])
+        self.assertIsInstance(out, list)
+        self.assertTrue(out, "a matched catalog denial must produce a non-empty list")
+        self.assertEqual(out[0]["path"], cat)
+        self.assertEqual(out[0]["verdict"], "deny")
+
+
+class TestReachPathBoundary(unittest.TestCase):
+    """Regression for the 2026-09-26 R2-c defect: reach attribution matched a
+    catalog path by plain substring, so a denied read of a sibling like `.ssh2`
+    was credited to `.ssh`. Attribution must be path-boundary aware. Pure function;
+    no sandbox needed."""
+
+    CAT = "/Users/u/.ssh"
+
+    def setUp(self):
+        self._log_ok = shield._log_show_available
+        self._query = shield._query_log_denies
+        shield._log_show_available = lambda: True
+
+    def tearDown(self):
+        shield._log_show_available = self._log_ok
+        shield._query_log_denies = self._query
+
+    def _capture_with_catalog_line(self, catalog_line: str, cat: str | None = None):
+        def q(start, tag):
+            if tag:  # control brackets observed
+                return ["deny( file-read* %s" % tag] * 2
+            return [catalog_line]
+        shield._query_log_denies = q
+        return shield._capture_reach(0.0, 0.0, "sometag", [cat or self.CAT])
+
+    # -- R3: the match needs a LEADING boundary too (a path ending in a copy of HOME)
+    ME = "/Users/me/.ssh"
+
+    def test_backup_volume_copy_of_home_not_attributed(self):
+        # trailing boundary passes ("/"), leading char before "/Users" is "p": reject
+        out = self._capture_with_catalog_line(
+            "deny(1) file-read-data /Volumes/Backup/Users/me/.ssh/id", cat=self.ME)
+        self.assertEqual(out, "UNAVAILABLE",
+                         "a backup-volume path ending in a copy of HOME was misattributed")
+
+    def test_tmp_prefixed_copy_of_home_not_attributed(self):
+        # trailing boundary passes (end of line), leading char is "x": reject
+        out = self._capture_with_catalog_line(
+            "deny(1) file-read-data /tmp/x/Users/me/.ssh", cat=self.ME)
+        self.assertEqual(out, "UNAVAILABLE",
+                         "a /tmp path ending in a copy of HOME was misattributed")
+
+    def test_leading_space_subpath_is_attributed(self):
+        out = self._capture_with_catalog_line(
+            "deny(1) file-read-data /Users/me/.ssh/id_x", cat=self.ME)
+        self.assertIsInstance(out, list)
+        self.assertEqual([e["path"] for e in out], [self.ME])
+
+    def test_leading_quote_is_attributed(self):
+        out = self._capture_with_catalog_line('"/Users/me/.ssh"', cat=self.ME)
+        self.assertIsInstance(out, list)
+        self.assertEqual([e["path"] for e in out], [self.ME])
+
+    def test_exact_end_of_line_is_attributed(self):
+        out = self._capture_with_catalog_line(
+            "deny(1) file-read-data /Users/me/.ssh", cat=self.ME)
+        self.assertIsInstance(out, list)
+        self.assertEqual([e["path"] for e in out], [self.ME])
+
+    def test_sibling_path_not_attributed(self):
+        # a denied read of `.ssh2` must NOT be recorded as a denied read of `.ssh`
+        out = self._capture_with_catalog_line(
+            f"2026-01-01 00:00:00 deny( file-read* {self.CAT}2 )")
+        self.assertEqual(out, "UNAVAILABLE",
+                         "a sibling `.ssh2` was misattributed to `.ssh`")
+
+    def test_suffixed_sibling_not_attributed(self):
+        out = self._capture_with_catalog_line(
+            f"2026-01-01 00:00:00 deny( file-read* {self.CAT}_backup/id )")
+        self.assertEqual(out, "UNAVAILABLE",
+                         "a sibling `.ssh_backup` was misattributed to `.ssh`")
+
+    def test_subpath_is_attributed(self):
+        out = self._capture_with_catalog_line(
+            f"2026-01-01 00:00:00 deny( file-read* {self.CAT}/id_x )")
+        self.assertIsInstance(out, list)
+        self.assertEqual([e["path"] for e in out], [self.CAT],
+                         "a subpath read under `.ssh` must attribute to `.ssh`")
+
+    def test_exact_path_token_is_attributed(self):
+        for line in (
+            f"2026-01-01 00:00:00 deny( file-read* {self.CAT} )",   # whitespace after
+            f'2026-01-01 00:00:00 deny( file-read* "{self.CAT}")',  # quote after
+        ):
+            out = self._capture_with_catalog_line(line)
+            self.assertIsInstance(out, list, f"exact token not matched in: {line}")
+            self.assertEqual([e["path"] for e in out], [self.CAT])
 
 
 class TestReceiptVerify(unittest.TestCase):
