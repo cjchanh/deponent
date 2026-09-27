@@ -4,6 +4,8 @@
 
 A deny-by-default gate, macOS Seatbelt jail, and tamper-evident ledger for local agent tool calls. Standard-library only: **zero third-party runtime dependencies.**
 
+> **Known issue (0.1.3 and earlier, `Cell`/jail library path only).** A process running inside the jail can rewrite its own Seatbelt policy file, and can plant a symlink that makes the trusted parent write through it to a file outside the sandbox; the file tools also have a check-then-open race. The 0.1.3 credential shield (`python3 -m deponent shield`) is not affected: it passes its policy with `-p`, scrubs the environment, and writes receipts outside the workspace. Fix and advisory: [link when published].
+
 **Install:** `pip install deponent`
 
 ```python
@@ -116,7 +118,7 @@ python3 -m deponent.badge verify --kernel deponent   # exit 0 only when the mark
 
 Any kernel that implements the small adapter and passes the clause set earns the same mark; a kernel that fails gets a red "not conformant" badge and a non-zero exit. The badge is generated locally — no shields.io, no network.
 
-**Seatbelt escape attempts — two kinds, kept separate so the claim is exactly as strong as the evidence.** (1) **Committed live canaries** (`canaries/CANARIES.md`, J1–J8): network exfil, raw-socket egress, writes outside the sandbox, child-process escape, memory-bomb, and wall-clock runaway — each a real test run against the live macOS sandbox, 0 through; if a canary stops holding, the suite goes red. (2) **Manual development review** — during development Seatbelt bypasses (`osascript 'do shell script'`, `launchctl submit`, loopback `/dev/tcp`, DNS, symlink/hardlink/rename writes-out) were hand-run and blocked; these **shaped the gate denylist and the Seatbelt profile but are not committed tests** — take them as reported, not reproducible from the repo.
+**Seatbelt escape attempts — two kinds, kept separate so the claim is exactly as strong as the evidence.** (1) **Committed live canaries** (`canaries/CANARIES.md`, J1–J8): network exfil, raw-socket egress, the jailed process's own writes outside the sandbox, child-process escape, memory-bomb, and wall-clock runaway — each a real test run against the live macOS sandbox, 0 through; if a canary stops holding, the suite goes red. They do not cover a parent-side write that follows a symlink the jailed process planted, or a policy file the jailed process rewrote; both land writes outside the sandbox on the `Cell`/jail path (see Known issue). (2) **Manual development review** — during development Seatbelt bypasses (`osascript 'do shell script'`, `launchctl submit`, loopback `/dev/tcp`, DNS, symlink/hardlink/rename writes-out attempted directly by the jailed process) were hand-run and blocked; these **shaped the gate denylist and the Seatbelt profile but are not committed tests** — take them as reported, not reproducible from the repo.
 
 **Recompute-not-trust evidence records:** the verifier does not read a stored boolean. It re-links the chain from genesis and recomputes the record's content hash over its canonical body. `persist()` runs that verifier on write and raises on failure. Self-reported health is never the evidence.
 
