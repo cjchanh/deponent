@@ -46,7 +46,7 @@ The default policy is a sane coding-agent sandbox, not a universal security poli
 
 ## Jail — macOS Seatbelt confinement
 
-The gate constrains *which* program runs. The jail constrains *what that program does once it runs* — because an allowed `python` or `pytest` can still execute arbitrary code inside the sandbox directory. On macOS the native primitive is `sandbox-exec` (Seatbelt): all network denied, file-writes confined to the sandbox directory, CPU and file-size rlimits, plus an RSS-polling watchdog (macOS ignores `ulimit -v`, so resident memory and wall-clock are enforced externally). Proofs: `tests/test_jail.py`. Every test below actually invokes `sandbox-exec`; the escape code runs inside the jail.
+The gate constrains *which* program runs. The jail constrains *what that program does once it runs* — because an allowed `python` or `pytest` can still execute arbitrary code inside the sandbox directory. On macOS the native primitive is `sandbox-exec` (Seatbelt): all network denied, the jailed process's own file-writes confined to the sandbox directory, CPU and file-size rlimits, plus an RSS-polling watchdog (macOS ignores `ulimit -v`, so resident memory and wall-clock are enforced externally). Proofs: `tests/test_jail.py`. Every test below actually invokes `sandbox-exec`; the escape code runs inside the jail. These canaries test the jailed process's own writes. They do not cover a write the trusted parent makes through a symlink the jailed process planted, or a policy file the jailed process rewrote; on the 0.1.3 `Cell`/jail path both can land a write outside the sandbox (see the README Known issue).
 
 | # | Attack | What should happen | Proving test | Verdict |
 |---|--------|--------------------|--------------|---------|
@@ -161,9 +161,9 @@ During development the Seatbelt jail was hand-attacked with nine escape attempts
 - **`launchctl submit`** — submit a job to `launchd` to run code outside the jail. No stray job ran; blocked. (Both `osascript` and `launchctl` are also denied at the gate layer above — defense in depth.)
 - **Loopback egress via `/dev/tcp`** — bash's network pseudo-device used to open a connection. Denied by the `(deny network*)` profile.
 - **DNS egress** — name resolution as a covert channel. Denied.
-- **Symlink / hardlink / rename writes-out** — create a link or rename to land a write outside the sandbox subpath. All blocked by `(deny file-write*)` with only the sandbox subpath allowed.
+- **Symlink / hardlink / rename writes-out, attempted directly by the jailed process** — create a link or rename to land a write outside the sandbox subpath. All blocked by `(deny file-write*)` with only the sandbox subpath allowed. A write the trusted parent makes through a symlink the jailed process planted is a different path, and 0.1.3 does not block it (see the README Known issue).
 
-The two failure modes that *are* killable at runtime — the **memory bomb** and the **wall-clock runaway** — were promoted out of the manual red-team into live tests (J6, J7 above), because they can be proven on every run. The network and write-out escapes are likewise proven live (J1–J5). The osascript and launchctl bypasses are documented here as the development red-team that motivated the gate-layer denylist and the Seatbelt profile.
+The two failure modes that *are* killable at runtime — the **memory bomb** and the **wall-clock runaway** — were promoted out of the manual red-team into live tests (J6, J7 above), because they can be proven on every run. The network escapes and the jailed process's own direct write-outs are likewise proven live (J1–J5). The osascript and launchctl bypasses are documented here as the development red-team that motivated the gate-layer denylist and the Seatbelt profile.
 
 ---
 
