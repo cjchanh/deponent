@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Security (`Cell`/jail library path, 0.1.3 and earlier):** a jailed process can rewrite the Seatbelt policy file in its work folder, and can plant a symlink so the parent's run log or policy write lands outside the sandbox; the file tools re-resolve paths at open time, so a directory swapped in after the check is followed. The credential shield is not affected. Fix: [DEP-01, link when published].
+
 ## 0.1.3
 
 Credential shield, and ledger verification that fails closed on missing, empty or forked testimony. Callers that used to get a success on these ledger inputs now get a refusal.
@@ -22,7 +26,7 @@ Gate and ledger hardening since 0.1.1. Not uploaded to PyPI from this tree.
 
 - `353f91b` — gate-only mode is deny-by-default: only `GATE_ONLY_SAFE_HEADS` run unjailed; interpreters need both opt-in knobs (C1).
 - `b18ff68` — argument paths glued to flags (`-o/tmp/x`, `--output=/tmp/x`) are containment-checked like spaced paths (red-team D-1).
-- `e1a2bf1` — `Ledger.head()` / `verify(expected_head, expected_length)`; write/read refuse outside-pointing symlinks.
+- `e1a2bf1` — `Ledger.head()` / `verify(expected_head, expected_length)`; write/read refuse outside-pointing symlinks present at check time (a symlink swapped in after the check is not caught; see Unreleased).
 - `16e8603` — every `run_cmd` argv token is resolved for containment, so a pre-planted sandbox symlink that points outside cannot be read through a bare name (red-team D-2).
 - `7a3d13e` — lock the D-2 escape-shape matrix (relative chain, symlink-to-symlink, dangling, directory, nested, flag values).
 - `c1f399e` — dash-prefixed operand after `--` is resolved as itself; execute path re-checks argv for direct subclass calls.
