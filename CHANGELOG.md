@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0
+
+Framing docs and internal-file hygiene for the public line. No core changes; gate, ledger, jail, receipts, cell and shield are as in 0.1.3.
+
+- **Added docs** (ported from the v0.2 framing line, leak-checked before landing): `API_SURFACE.md`, `README_SDK.md`, `docs/RUST_ADAPTER_SPEC.md`, `docs/THREAT_MODEL.md`.
+- **Removed** `UPGRADE_REPORT.md` and the `.githooks/` directory — both reference internal spec IDs and a private checkout; the canonical gate excludes this class of file.
+- **Version bump** 0.1.3 → 0.2.0 (`pyproject.toml`, `deponent.__version__`, the `SPEC.md` version statements, and the conformance pins that track them).
+
 ## 0.1.3
 
 Credential shield, and ledger verification that fails closed on missing, empty or forked testimony. Callers that used to get a success on these ledger inputs now get a refusal.
