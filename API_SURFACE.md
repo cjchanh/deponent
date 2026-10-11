@@ -1,94 +1,97 @@
-# Deponent SDK — Public API Surface Inventory
+# Deponent SDK — public API inventory
 
-Generated during Phase 1 of the GAK SDK extraction plan.
-
-## Baseline test status
-
-| Repo | Command | Result |
-|---|---|---|
-| `deponent` | `python3 -m pytest --collect-only -q` | 181 tests across 19 files (this checkout) |
-| downstream consumers | not re-run from this repo | out of scope for a deponent-only checkout |
+This inventory describes the 0.2.0 source tree. Listed symbols are present in that
+tree; provisional APIs are not a compatibility promise. Host-specific verification
+is recorded in [docs/SDK_REVIEW_VERIFICATION.md](docs/SDK_REVIEW_VERIFICATION.md).
 
 ## Module inventory
 
-| Module | Current public symbols | Role |
+| Module | Public symbols | Role |
 |---|---|---|
-| `deponent` (package) | `Cell`, `ActResult`, `Gate`, `GateDecision`, `DENY_SUBSTR`, `ALLOW_HEADS`, `build_gate`, `build_cell`, `Ledger`, `Claim`, `ClaimSet`, `attest`, `jail_available`, `jail_command`, `run_jailed`, `persist`, `verify`, `write_operator_receipt`, `__version__` | Convenience re-exports |
-| `deponent.gate` | `Gate`, `GateDecision`, `DENY_SUBSTR`, `ALLOW_HEADS` | Deny-by-default action classifier |
-| `deponent.cell` | `Cell`, `ActResult` | Gate → execute → ledger wrapper |
-| `deponent.ledger` | `Ledger` | Tamper-evident hash chain |
-| `deponent.receipts` | `persist`, `verify`, `write_operator_receipt`, `RECEIPTS_ROOT`, `PRODUCER`, `RECEIPT_SCHEMA` | Verifiable receipt persistence |
-| `deponent.profiles` | `build_gate`, `build_cell`, `BUILD_ALLOW_HEADS`, `BUILD_DENY_SUBSTR`, `BUILD_DENY_EXTRA` | Pre-tuned policy profiles |
-| `deponent.jail` | `jail_available`, `jail_command`, `run_jailed` | macOS Seatbelt sandbox wrapper |
-| `deponent.reconcile` | `ReconcileReport`, `snapshot`, `reconcile_action` | Two-plane declared-vs-observed diff |
-| `deponent.attest` | `Claim`, `ClaimSet`, `attest`, `map_decision`, `ledger_to_ext_trace`, `cell_results_to_ext_trace`, `render_coverage` | Compliance coverage derivation |
-| `deponent.conformance` | `KernelAdapter`, `Clause`, `ClauseResult`, `ConformanceReceipt`, `CLAUSES`, `run_conformance`, `DeponentAdapter` | Cross-kernel GAK conformance harness |
-| `deponent.sworn_adapter` | `SwornAdapter` | Commit-gate adapter for sworncode |
-| `deponent.reach` | `ReachOracle`, `ReachReport`, `classify_reach` | Graph-derived blast radius |
-| `deponent.selfgate`, `claims`, `operator_attest`, `jail_backends` | Internal / advanced | Extensions and attest plumbing |
+| `deponent` | `Cell`, `ActResult`, `Gate`, `GateDecision`, `DENY_SUBSTR`, `ALLOW_HEADS`, `build_gate`, `build_cell`, `Ledger`, `Claim`, `ClaimSet`, `attest`, `jail_available`, `jail_command`, `run_jailed`, `persist`, `verify`, `write_operator_receipt`, `__version__` | Standard-library-only convenience exports |
+| `deponent.gate` | `Gate`, `GateDecision`, `DENY_SUBSTR`, `ALLOW_HEADS` | Action classification and policy defaults |
+| `deponent.cell` | `Cell`, `ActResult` | Gate → execute → ledger |
+| `deponent.ledger` | `Ledger`, `LedgerForkError` | Hash chain and stale-writer refusal |
+| `deponent.receipts` | `persist`, `verify`, `write_operator_receipt`, `RECEIPTS_ROOT`, `PRODUCER`, `RECEIPT_SCHEMA` | Receipt persistence and verification |
+| `deponent.profiles` | `build_gate`, `build_cell`, `BUILD_ALLOW_HEADS`, `BUILD_DENY_SUBSTR`, `BUILD_DENY_EXTRA` | Workload policy profiles |
+| `deponent.jail` | `jail_available`, `jail_command`, `write_profile`, `run_jailed`, `select_backend`, `SeatbeltBackend`, `DockerBackend`, `SANDBOX_EXEC` | Backend dispatch; `jail_command` is Seatbelt-specific |
+| `deponent.reconcile` | `ReconcileReport`, `snapshot`, `reconcile_action` | Observed versus declared workspace changes |
+| `deponent.claims` | `Claim`, `ClaimSet`, `attest` | Coverage derivation; no cryptography dependency |
+| `deponent.attest` | `EXPORT_SCHEMA`, `attestation_record`, `demo_attestation_record` | Optional operator-attestation export; requires `deponent[attest]` |
+| `deponent.conformance` | `KernelAdapter`, `Clause`, `ClauseResult`, `ConformanceReceipt`, `CLAUSES`, `run_conformance`, `DeponentAdapter` | Executable conformance probes |
+| `deponent.adapters.contract` | `KernelAdapter` | Protocol definition |
+| `deponent.adapters` | `DeponentAdapter` | Built-in adapter export; no `KernelAdapter` re-export |
+| `deponent.reach` | `ReachOracle`, `ReachReport`, `ImportGraphReach` | Experimental graph-derived reach |
 
-## Stable public surface (Phase 2 target)
+`deponent/adapters/sworn.py` and `deponent/sworn_adapter.py` are **source-only
+legacy wrappers**, excluded from the distribution. Sworn is not the current
+built-in validator. The built-in registry contains only `deponent`.
 
-These are the symbols the SDK guarantees for external consumers:
+There is no `deponent.jail_backends` module; backend classes live in
+`deponent.jail`. There is no `classify_reach` function; use the reach types above.
+
+## Common imports
 
 ```python
 from deponent import (
-    Cell, ActResult,
-    Gate, GateDecision,
-    Ledger,
+    Cell, ActResult, Gate, GateDecision, Ledger,
     persist, verify, write_operator_receipt,
-    build_gate, build_cell,
-    __version__,
+    build_gate, build_cell, __version__,
 )
+from deponent.claims import Claim, ClaimSet, attest
+from deponent.adapters.contract import KernelAdapter
+from deponent.conformance import run_conformance
 ```
 
-Advanced but documented:
+The top-level `attest` callable is the coverage function from `deponent.claims`.
+Keep it distinct from the optional `deponent.attest` **module**. Import the
+coverage function from `deponent.claims` when using both surfaces in one process.
+
+## Provisional and optional surfaces
+
+- `deponent.reach`: experimental graph plumbing.
+- `deponent.reconcile`: optional observed-versus-declared checking.
+- `deponent.operator_attest`: opt-in Ed25519 surface requiring cryptography.
+- `deponent.selfgate`: repository commit checks, not a top-level SDK export.
+- Backend-specific jail helpers: host-dependent and subject to the
+  [threat model](docs/THREAT_MODEL.md); availability is not security assurance.
+
+## Migration from an earlier consumer kernel
+
+The earlier consumer implementation is not part of this checkout. These are
+integration targets, not a verified behavioral-equivalence claim.
+
+| Earlier consumer concept | Candidate interface | Required integration check |
+|---|---|---|
+| Action classifier | `deponent.gate.Gate` | Compare policy, verdicts, and gate-only settings on the consumer's corpus |
+| Audit chain | `deponent.ledger.Ledger` | Compare serialization, load/append behavior, anchors, and errors |
+| Persist a chain | `deponent.receipts.persist` | Supply `producer=` and `root=`; translate metadata deliberately |
+| Verify a receipt | `deponent.receipts.verify` | Use the same producer/root; establish accepted schemas |
+| Consumer-specific fault injection | Consumer's harness | Preserve its acceptance criteria and compare outcomes |
+
+Downstream consumers have not been tested in this documentation repair.
+
+## Policy and platform behavior
+
+`DENY_SUBSTR` is a tuple and `ALLOW_HEADS` is a frozenset. `Gate.__init__` captures
+its defaults at function definition and copies policy per instance. Rebinding
+those module names does **not** change new default gates. Configure each gate
+explicitly, preserving the defaults when adding a restriction:
 
 ```python
-from deponent import (
-    Claim, ClaimSet, attest,
-    jail_available, run_jailed,
-)
+from deponent import Gate, DENY_SUBSTR, ALLOW_HEADS
+
+def restricted_gate(workspace):
+    return Gate(
+        workspace,
+        deny=DENY_SUBSTR + ("example-denied-token",),
+        allow_heads=ALLOW_HEADS,
+    )
 ```
 
-## Internal / provisional surface
-
-These should not be in the top-level `__all__` until stabilized:
-
-- `deponent.reconcile` internals (optional capability)
-- `deponent.operator_attest` (Ed25519, opt-in security surface)
-- `deponent.selfgate` (dogfooding deponent's own git commits)
-- `deponent.reach` graph plumbing (experimental)
-
-## consumer-kernel compatibility matrix
-
-| consumer-kernel symbol | deponent equivalent | Action |
-|---|---|---|
-| `cds_gate.CDSGate` | `deponent.gate.Gate` | Direct replacement; identical behavior |
-| `cds_gate.GateDecision` | `deponent.gate.GateDecision` | Direct replacement |
-| `cds_gate.AuditChain` | `deponent.ledger.Ledger` | Direct replacement; same `GENESIS`, `_hash`, `verify_entries` |
-| `receipt_adapter.persist_chain` | `deponent.receipts.persist` | Add a caller-supplied `producer=` override |
-| `receipt_adapter.verify_receipt` | `deponent.receipts.verify` | Add a caller-supplied `producer=` override |
-| `dst_conformance.FaultyAuditChain` | No direct equivalent | Keep as consumer-kernel-specific adapter; may move to deponent later |
-| `dst_conformance.RunResult / Receipt` | No direct equivalent | Keep as DST harness types |
-
-## Notable deltas
-
-1. **Policy defaults are identical.** Both use the same `DENY_SUBSTR` and `ALLOW_HEADS` tuples/frozensets.
-2. **Ledger vs AuditChain naming.** deponent calls the chain `Ledger`; consumer-kernel calls it `AuditChain`. Same implementation.
-3. **Receipt schema field names differ slightly.** consumer-kernel adds `gate_version`; deponent adds `schema`. A compatibility wrapper is trivial.
-4. **deponent has jail + reconcile + attest; consumer-kernel does not.** consumer-kernel gets these for free by importing deponent.
-5. **consumer-kernel's `dst_conformance.py` is a specialized DST harness for the gate.** It can stay in consumer-kernel as a deponent-compatible conformance test.
-
-## Recommended extraction order
-
-1. Stabilize deponent public API (Phase 2).
-2. Port consumer-kernel `cds_gate.py` → `deponent.gate` / `deponent.ledger` (Phase 3).
-3. Port consumer-kernel `receipt_adapter.py` → `deponent.receipts` (Phase 3).
-4. Promote conformance harness to CLI (Phase 4).
-5. Write SDK docs, SafetySpine example, Rust adapter spec (Phase 5).
-
-## Risk notes
-
-- The top-level `deponent/__init__.py` currently re-exports `DENY_SUBSTR` / `ALLOW_HEADS`. Keeping these as mutable module globals in the public API is acceptable because consumers can pass custom tuples to `Gate`, but we should document that mutating the module globals affects all default gates.
-- `deponent.cell.Cell.__init__` has a `use_jail=True` default. On non-macOS platforms `jail_available()` returns False and commands fail closed. This is correct but must be documented for external users.
+`Cell` defaults to `use_jail=True`. macOS selects Seatbelt; other platforms select
+Docker. Docker availability requires the CLI and a responding daemon. With no
+backend, jailed commands are refused. Docker remains DRAFT in its class and tests,
+despite a conflicting historical module-level claim; run the opt-in live tests on
+the target host before claiming confinement. The threat model retains the detailed
+limits, including the Cell/jail control-file issue.

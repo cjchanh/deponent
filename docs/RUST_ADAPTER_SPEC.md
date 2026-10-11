@@ -1,138 +1,136 @@
-# Rust Adapter Spec for the GAK Conformance Harness
+# Rust adapter contract for the GAK conformance harness
 
-The GAK (Governance-Auditable Kernel) conformance harness is language-neutral.
-A Rust kernel can participate by implementing the same small contract that
-`deponent.adapters.KernelAdapter` expresses in Python.
+An external kernel can use the Python harness through
+`deponent.adapters.contract.KernelAdapter`. It is also re-exported from
+`deponent.conformance`, but **not** from `deponent.adapters`.
 
-## Core idea
+The harness evaluates fixed probes. The adapter is trusted to exercise its kernel
+honestly; hard-coded success answers do not establish the underlying behavior.
 
-The harness asks a kernel a fixed set of questions (the GAK clauses) and
-expects a boolean answer for each. The kernel is free to implement the
-underlying mechanism however it wants; only the answers matter.
+## Metadata
 
-## The contract
+The Python shim exposes:
 
-A Rust adapter must provide the following behavior. Names and types are
-idiomatic; semantics are what matter.
-
-### Required metadata
-
-```rust
-pub struct KernelInfo {
-    pub name: String,       // e.g. "dst-harness", "safetyspine"
-    pub profile: String,    // "action-gate" | "commit-gate"
-    pub supports: Vec<String>, // optional capabilities: "reconcile", "attest"
-}
+```python
+name: str
+profile: str              # "action-gate" or "commit-gate"
+supports: frozenset[str]  # optional: "reconcile", "attest"
 ```
 
-### Action-gate profile
+The Rust signatures below describe semantics. A Python shim must translate Python
+dictionaries and results to the Rust implementation's types. They are not a
+complete Rust crate or a verified binding.
 
-If `profile == "action-gate"`, the adapter must answer:
-
-```rust
-fn verdict(tool: &str, params: &HashMap<String, String>) -> Verdict;
-```
-
-where `Verdict` is `"ALLOW"` or `"BLOCK"`.
-
-The harness will probe with calls like:
-
-| Tool | Params | Expected |
-|---|---|---|
-| `write_file` | `{path: "ok.txt", content: "x"}` | ALLOW |
-| `write_file` | `{path: "../escape.py", content: "x"}` | BLOCK |
-| `run_cmd` | `{cmd: "rm -rf /"}` | BLOCK |
-| `run_cmd` | `{cmd: "ftp some.host"}` | BLOCK |
-| `run_cmd` | `{cmd: "echo pwned>/tmp/evil.txt"}` | BLOCK (GAK-REDIRECT-DENIED) |
-| `run_cmd` | `{cmd: "echo ok\\nshred secret"}` | BLOCK (GAK-NEWLINE-CHAINED) |
-| `definitely_not_a_real_tool` | `{}` | BLOCK |
-
-### Commit-gate profile
-
-If `profile == "commit-gate"`, the adapter must answer:
+## Required action-gate methods
 
 ```rust
-fn commit_verdict(files: &[&str]) -> Verdict;
-fn commit_testifies(files: &[&str]) -> bool;
+fn verdict(&self, tool: &str, params: &HashMap<String, String>) -> String;
+fn jail_fails_closed(&self) -> bool;
 ```
 
-Probes:
+`verdict` classifies and returns exactly `"ALLOW"` or `"BLOCK"`. **Do not execute
+commands supplied by classification probes.** The destructive-floor probe uses a
+destructive command to test refusal, not effects.
 
-| Files | Expected |
+`jail_fails_closed` must exercise the unavailable-confinement path and confirm
+refusal to execute. It is required for an action-gate adapter. A missing method
+raises inside the check and becomes FAIL, not NA.
+
+| Clause | Current probe |
 |---|---|
-| `["crypto/vault.py"]` | BLOCK |
-| `["README.md"]` | ALLOW |
-| `["crypto/vault.py"]` | `commit_testifies` returns true (BLOCK still recorded) |
+| `GAK-DENY-DEFAULT` | Unknown tool must be BLOCK |
+| `GAK-ALLOW-INBOUNDS` | `write_file` of `ok.txt` with content `x` must be ALLOW |
+| `GAK-PATH-CONTAINMENT` | Write outside the workspace must be BLOCK |
+| `GAK-DESTRUCTIVE-FLOOR` | Destructive command must be BLOCK; classification only |
+| `GAK-PROGRAM-ALLOWLIST` | Non-allowlisted program must be BLOCK |
+| `GAK-JAIL-FAILS-CLOSED` | `jail_fails_closed()` must return true |
 
-### Universal clauses
+Use [CLAUSES](../deponent/conformance.py) for exact inputs. The current set has no
+`GAK-REDIRECT-DENIED` or `GAK-NEWLINE-CHAINED` clauses. Deponent's separate gate
+regressions cover those behaviors; they are not part of an external adapter's
+conformance result.
 
-Every adapter must answer:
-
-```rust
-fn clean_chain_verifies() -> bool;   // untampered chain re-verifies -> true
-fn tamper_is_detected() -> bool;     // forged entry detected -> true
-```
-
-### Optional clauses
-
-If `"reconcile"` is in `supports`:
+## Required commit-gate methods
 
 ```rust
-fn reconcile_catches_undeclared() -> bool;
+fn commit_verdict(&self, files: &[&str]) -> String;
+fn commit_testifies(&self, files: &[&str]) -> bool;
 ```
 
-If `"attest"` is in `supports`:
+| Clause | Current probe |
+|---|---|
+| `GAK-COMMIT-DENY-SECURITY` | `crypto/vault.py` must be BLOCK |
+| `GAK-COMMIT-ALLOW-CLEAN` | `README.md` must be ALLOW |
+| `GAK-COMMIT-TESTIFIES` | Refusal of `crypto/vault.py` must still be recorded |
+
+Action-gate clauses, including the jail clause, report NA for a commit-gate adapter.
+
+## Universal and optional methods
+
+Every adapter must exercise and report:
 
 ```rust
-fn attest_abstains_when_unproven() -> bool;
+fn clean_chain_verifies(&self) -> bool;
+fn tamper_is_detected(&self) -> bool;
 ```
 
-## Two ways to wire a Rust kernel
-
-### Option A — Python shim
-
-Implement the Rust side as a small CLI or library, then wrap it in a Python
-`KernelAdapter` that shells out or uses PyO3. This is the fastest path and lets
-`python3 -m deponent.conform --kernel <yours>` work immediately.
-
-### Option B — Native Rust harness
-
-Port the clause set in `deponent/conformance.py` to Rust and run it directly.
-Keep the same clause IDs and semantics so two implementations of the same
-kernel produce comparable receipts.
-
-## Receipt format
-
-Regardless of language, a conformance run emits a `ConformanceReceipt`:
-
-```json
-{
-  "kernel": "safetyspine",
-  "profile": "action-gate",
-  "conformant": true,
-  "counts": {"pass": 9, "fail": 0, "na": 3},
-  "clauses": [
-    {"id": "GAK-DENY-DEFAULT", "profile": "action-gate", "status": "PASS",
-     "detail": "An unknown/ungoverned action is denied by default."}
-  ]
-}
-```
-
-## Example: minimal Rust trait
+An action-gate adapter claiming `"reconcile"` also needs:
 
 ```rust
-pub trait GakKernel {
-    fn info(&self) -> KernelInfo;
-    fn verdict(&self, tool: &str, params: &HashMap<String, String>) -> Verdict;
-    fn clean_chain_verifies(&self) -> bool;
-    fn tamper_is_detected(&self) -> bool;
-    // commit-gate methods...
-}
+fn reconcile_catches_undeclared(&self) -> bool;
 ```
 
-## Reference implementations
+Either profile claiming `"attest"` also needs:
 
-- Python action-gate: `deponent/adapters/deponent.py`
-- Python commit-gate: `deponent/adapters/sworn.py`
-- Rust DST primitive: `dst-harness` (a reference for deterministic simulation,
-  not yet a GAK adapter)
+```rust
+fn attest_abstains_when_unproven(&self) -> bool;
+```
+
+Unsupported optional capabilities and out-of-profile clauses report NA.
+Exceptions inside required checks report FAIL. Do not present NA as proof of a
+behavior the adapter cannot support.
+
+## Connect a Python shim
+
+Implement a shim around a Rust CLI or library and call the harness directly. Once
+an application-owned `my_kernel_adapter` module supplies `MyKernelAdapter`:
+
+```python
+import json
+from deponent.conformance import run_conformance
+from my_kernel_adapter import MyKernelAdapter  # supplied by your integration
+
+receipt = run_conformance(MyKernelAdapter())
+print(json.dumps(receipt.to_dict(), indent=2))
+raise SystemExit(0 if receipt.conformant else 1)
+```
+
+The stock CLI's `--kernel` choices come from
+`deponent.adapters.BUILTIN_ADAPTERS`, which currently contains only `deponent`.
+There is no entry-point discovery or CLI external-adapter loader. Dropping a shim
+into a directory does not register it. A source integration needing a new CLI name
+must explicitly register its adapter and test that distribution. Direct
+`run_conformance()` use needs no registry change.
+
+## Native Rust harness
+
+A native implementation can port the clauses and receipt semantics. Pin the
+reference revision, reproduce profile/capability filtering and error behavior,
+and compare correct and deliberately broken kernels. No Rust implementation or
+cross-language equivalence is verified by this document.
+
+## Receipts and reference code
+
+`ConformanceReceipt.to_dict()` returns `kernel`, `profile`, `conformant`, `counts`,
+and `clauses`. Each clause has `id`, `profile`, `status`, and `detail`. Counts come
+from actual results. When all applicable probes pass, the current built-in adapter
+returns 10 PASS, 0 FAIL, and 3 NA. This is self-assessed conformance, not external
+certification or proof that a target machine's jail has been tested.
+
+- [Protocol](../deponent/adapters/contract.py)
+- [Built-in action-gate adapter](../deponent/adapters/deponent.py)
+- [Clause definitions](../deponent/conformance.py)
+- [CLI registry](../deponent/adapters/__init__.py)
+
+The source Sworn wrappers are legacy, excluded from distribution, and not current
+built-in validators.
