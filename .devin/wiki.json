@@ -1,0 +1,88 @@
+{
+  "repo_notes": [
+    {
+      "content": "Deponent is a deny-by-default action gate, a macOS Seatbelt jail, and a tamper-evident sha256 hash-chained ledger for local AI-agent tool calls — 'It doesn't answer. It testifies.' The core is standard-library only (zero third-party runtime dependencies), Apache-2.0, version 0.1.3, an openly-described research prototype. Core invariant from SPEC.md: nothing irreversible or out-of-sandbox executes without a recorded ALLOW. Boundary honesty is part of the product: the live-verified jail is macOS Seatbelt (sandbox-exec) only; when the jail is unavailable it fail-closes (records ALLOW, refuses execution) rather than silently degrading; gate-only mode is policy evidence, not sandbox evidence — interpreters and command chains need explicit allow_unjailed_heads + allow_unjailed_interpreters opt-ins on BOTH the Cell and its Gate, and gate-only commands run without a shell, one at a time. The ledger is tamper-evident for edits, deletions and reordering, but truncation/re-chaining is caught only against a head published outside the ledger (Ledger.head() / receipt ledger_head); a missing or empty ledger file never verifies on its own. Tamper-evident, not tamper-proof.",
+      "author": "Devin"
+    },
+    {
+      "content": "Layout: deponent/ is ~5,200 lines across ~19 modules plus adapters/. The five-pillar kernel: cell.py (~337, Cell orchestrator — subclass and override _execute to wrap a custom tool surface), gate.py (~349, deny-by-default policy), jail.py (~289, Seatbelt profile generation and sandbox-exec), ledger.py (~295, append-only sha256 chain), receipts.py (~182, self-recomputing evidence record whose persist() does a write-time round-trip and raises on failure). Around the core: shield.py (~1001, the credential-shield CLI `python3 -m deponent shield` running an agent process tree under a deny-by-default HOME-read Seatbelt profile while the parent writes an externally anchored receipt), playground.py (~819, gate-only ClassifyCell evaluation harness), badge.py (~284, `python3 -m deponent.badge verify --kernel deponent` self-evaluation mark), claims.py (~270), conformance.py (~254), reach.py (~132, ReachOracle reverse-dependency write checks), selfgate.py (~154), operator_attest.py (~151, optional deponent[attest] extra — not part of the keyless path), profiles.py, reconcile.py, attest.py, conform.py, sworn_adapter.py and adapters/{contract,deponent,sworn}.py — the sworn pieces are hatch-excluded legacy wrappers, and only 'deponent' is registered in BUILTIN_ADAPTERS. tests/ has ~20 pytest modules including live Seatbelt proofs and test_gate_only_containment.py; canaries/CANARIES.md is the testimony catalog mapping each claim to its proving test (e.g. G1-G8 gate attacks). docs/ has WHY.md (rationale), BOUNDARIES.md (limits), SHIELD.md (credential-shield scope). examples/ has 8 demos (minimal.py, governed_team.py, safety_action_governor.py, playground/ JSON fixtures). .githooks/ carries pre-commit and commit-msg hooks with attribution-patterns.txt. CI is .github/workflows/ci.yml: pytest matrix ubuntu+macOS across py3.10-3.13 (Seatbelt tests skip on Linux). Prioritize the five-pillar core and boundary honesty; de-emphasize the sworn legacy wrappers and UPGRADE_REPORT.md.",
+      "author": "Devin"
+    },
+    {
+      "content": "Vocabulary: Cell, Gate, Jail (Seatbelt/sandbox-exec), Ledger head/chain, receipts and the persist() round-trip, ALLOW/BLOCK verdicts with classifications (destructive-or-out-of-scope, out-of-sandbox-write, command-substitution, chain-unjailed, unknown-tool, malformed-arguments), gate-only vs jail containment, canary, claim-set/attest, badge, sealed vs disposable demo targets, split-opt-in knobs (allow_unjailed_heads, allow_unjailed_interpreters). First-class sources: SPEC.md (governance contract + threat model — 'the limits are the product'), canaries/CANARIES.md (runnable testimony catalog — every protection claim names its test), docs/WHY.md, docs/BOUNDARIES.md, docs/SHIELD.md, AGENTS.md (agent contract: allow/block lists, product-truth notes like 'Do not describe Sworn as the current validator path' and no private host paths in public files).",
+      "author": "Devin"
+    }
+  ],
+  "pages": [
+    {
+      "title": "Overview",
+      "purpose": "What Deponent is: deny-by-default gate + macOS Seatbelt jail + tamper-evident hash-chained ledger + self-verifying receipts for local agent tool calls; the zero-dependency stdlib core; the 'testifies, doesn't answer' stance and research-prototype framing.",
+      "parent": null
+    },
+    {
+      "title": "Getting Started",
+      "purpose": "Install (pip install deponent / -e \".[dev]\"), the Cell(tempfile.mkdtemp(), use_jail=...) quickstart from README.md and examples/minimal.py, act() on write_file/read_file/run_cmd/exfiltrate, cell.verify(), the `python3 -m deponent.badge verify --kernel deponent` self-check, and use_jail semantics per platform.",
+      "parent": "Overview"
+    },
+    {
+      "title": "The Five Pillars and Core Invariant",
+      "purpose": "The gate -> jail -> ledger -> receipts -> cell pipeline from SPEC.md; the invariant that nothing irreversible or out-of-sandbox executes without a recorded ALLOW; how subclassing Cell and overriding _execute wraps a custom tool surface.",
+      "parent": "Overview"
+    },
+    {
+      "title": "Containment Boundaries and Failure Modes",
+      "purpose": "docs/BOUNDARIES.md made concrete: Seatbelt as the only live-verified jail, fail-closed when jail is unavailable (records ALLOW, refuses execution), gate-only mode as policy evidence not sandbox evidence, the dual Cell+Gate opt-ins for unjailed heads and interpreters, no-shell single-command rule, and the ledger's external-anchor requirement for truncation/re-chain detection.",
+      "parent": "Overview"
+    },
+    {
+      "title": "The Gate",
+      "purpose": "deponent/gate.py: deny-by-default verdicts, allowlist policy, classification codes (destructive-or-out-of-scope, out-of-sandbox-write, command-substitution, chain-unjailed, unknown-tool, malformed-arguments), path checks covering spaced/glued/dash-prefixed/symlinked arguments, command-chain analysis, and the optional ReachOracle (deponent/reach.py) reverse-dependency write check.",
+      "parent": null
+    },
+    {
+      "title": "The Jail",
+      "purpose": "deponent/jail.py: Seatbelt profile generation, sandbox-exec invocation, what confinement does and does not cover on macOS, and behavior on hosts without Seatbelt.",
+      "parent": null
+    },
+    {
+      "title": "Ledger and Receipts",
+      "purpose": "deponent/ledger.py append-only sha256 hash chain and Ledger.head()/load().verify() semantics (edits, deletions, reordering detected; truncation only against an external anchor); deponent/receipts.py evidence record that recomputes chain from genesis plus its own content hash, with persist() raising on round-trip failure.",
+      "parent": null
+    },
+    {
+      "title": "The Cell Orchestrator",
+      "purpose": "deponent/cell.py: the Cell API tying gate+jail+ledger together, act() dispatch for the builtin tools, the _execute subclass contract, heads/interpreter opt-in kwargs and why they must be set on both Cell and Gate.",
+      "parent": null
+    },
+    {
+      "title": "Credential Shield",
+      "purpose": "deponent/shield.py and docs/SHIELD.md: `python3 -m deponent shield` running an agent process tree under a deny-by-default HOME-read Seatbelt profile, the parent-side hash-chained externally anchored receipt, and the defense-in-depth scope (proof layer on top of containment, not a replacement).",
+      "parent": null
+    },
+    {
+      "title": "Claims, Attestation and Self-Governance",
+      "purpose": "deponent/claims.py claim-sets, attest.py, operator_attest.py (the optional [attest] extra, not the keyless path), selfgate.py, conformance.py/conform.py, profiles.py, reconcile.py, badge.py self-evaluation: what honest claim-sets look like and how jail coverage is reported.",
+      "parent": null
+    },
+    {
+      "title": "Playground Evaluation Harness",
+      "purpose": "deponent/playground.py: the gate-only ClassifyCell, the examples/playground/ fixtures (mixed.json, rogue.json, well_behaved.json), and why a chain like 'echo a && echo b' is chain-unjailed BLOCK under gate-only but ALLOW under jail mode.",
+      "parent": null
+    },
+    {
+      "title": "Adapters and the Sworn Legacy",
+      "purpose": "deponent/adapters/contract.py + adapters/deponent.py adapter contract and built-in registration, adapters/sworn.py and sworn_adapter.py as hatch-excluded legacy wrappers, and the AGENTS.md product truth that only 'deponent' is in BUILTIN_ADAPTERS.",
+      "parent": null
+    },
+    {
+      "title": "Examples, Canaries and Tests",
+      "purpose": "examples/ demos (minimal.py, governed_team.py, safety_action_governor.py, custom_tool.py, backends.py, demo.py) using disposable relative targets; canaries/CANARIES.md testimony catalog mapping attacks to proving tests; tests/ layout (~20 modules incl. live Seatbelt proofs and test_gate_only_containment.py); .github/workflows/ci.yml matrix ubuntu+macOS x py3.10-3.13 with Seatbelt tests skipping on Linux; .githooks pre-commit/commit-msg.",
+      "parent": null
+    },
+    {
+      "title": "Design Documents",
+      "purpose": "SPEC.md as the governance contract and threat model where limits are the product; docs/WHY.md rationale; docs/BOUNDARIES.md; AGENTS.md agent contract (allow/block lists, no-private-paths rule); UPGRADE_REPORT.md and CHANGELOG.md as historical records.",
+      "parent": null
+    }
+  ]
+}
