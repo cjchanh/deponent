@@ -355,6 +355,54 @@ class TestPublicDistributionTruth(unittest.TestCase):
         self.assertIn("test_block_redirect_glued_out_of_sandbox", text)
         self.assertIn("test_block_newline_second_command", text)
 
+    def test_public_docs_scope_jail_write_claims_to_the_jailed_process(self):
+        # 0.1.3 Cell/jail path: the Seatbelt policy file and the run log sit inside
+        # the writable sandbox, and the file tools open by path after the check.
+        # Write-out is covered only for the jailed process's own direct writes;
+        # the indirect path is listed as not covered (README "Known issue").
+        required = {
+            "SPEC.md": (
+                "no network, the jailed process's own writes confined to the sandbox",
+                "| Arbitrary code inside an allowed program writing outside the sandbox directly "
+                "| **Covered (jail, macOS Seatbelt)** |",
+                "causing a write outside the sandbox indirectly (0.1.3, `Cell`/jail library path) "
+                "| **Not covered** |",
+                "cover network egress, the jailed process's own write-out,",
+                "symlink/hardlink/rename writes-out attempted directly by the jailed process",
+            ),
+            "canaries/CANARIES.md": (
+                "all network denied, the jailed process's own file-writes confined to the "
+                "sandbox directory",
+                "They do not cover a write the trusted parent makes through a symlink the "
+                "jailed process planted",
+                "**Symlink / hardlink / rename writes-out, attempted directly by the jailed "
+                "process**",
+                "The network escapes and the jailed process's own direct write-outs are "
+                "likewise proven live",
+            ),
+        }
+        forbidden = {
+            "SPEC.md": (
+                "no network, writes confined to the sandbox",
+                "| Arbitrary code inside an allowed program writing outside the sandbox "
+                "| **Covered",
+                "cover network egress, write-out,",
+            ),
+            "canaries/CANARIES.md": (
+                "all network denied, file-writes confined to the sandbox directory",
+                "**Symlink / hardlink / rename writes-out** —",
+                "The network and write-out escapes are likewise proven live",
+            ),
+        }
+        findings = []
+        for relative, needles in required.items():
+            text = (REPO_ROOT / relative).read_text(encoding="utf-8")
+            findings += [f"{relative}: missing {n!r}" for n in needles if n not in text]
+        for relative, needles in forbidden.items():
+            text = (REPO_ROOT / relative).read_text(encoding="utf-8")
+            findings += [f"{relative}: still says {n!r}" for n in needles if n in text]
+        self.assertEqual(findings, [], "unscoped jail write claim: " + "; ".join(findings))
+
 
 if __name__ == "__main__":
     unittest.main()

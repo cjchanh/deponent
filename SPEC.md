@@ -60,7 +60,7 @@ recorded but not gating** (`governed_team.py:277-279`).
 | **Fail-closed** | `gate.py`, `jail.py:108-109`, `cell.py:299-300` | Unknown tool, unparsable command, path escape → BLOCK. When no confinement backend is available, `run_cmd` **refuses to execute un-jailed** rather than degrade to a bare run. |
 | **Dry-run / gate-before-destructive** | `cell.py:113-130` | The gate classifies blast radius *before* any execution. Destructive/irreversible signatures (`rm -rf`, `mkfs`, `dd`, `sudo`, …) never reach the shell (`gate.py:52-61`, `test_gate.py:34`). |
 | **Independent audit** | `ledger.py` | Every decision + a hash of its outcome is appended to a tamper-evident chain, verifiable after the fact by re-linking from genesis — a path independent of the agent's own status signal. |
-| **Bounded execution** | `jail.py` | Live-verified Seatbelt jail (macOS): no network, writes confined to the sandbox, CPU/file-size rlimits, plus RSS-polling and wall-clock watchdogs that kill runaways (`jail.py:118-147`). A Docker backend exists in the same module and is marked **DRAFT**, not live-verified. |
+| **Bounded execution** | `jail.py` | Live-verified Seatbelt jail (macOS): no network, the jailed process's own writes confined to the sandbox (in 0.1.3 the jail's policy file and run log also sit inside the sandbox; see the threat table), CPU/file-size rlimits, plus RSS-polling and wall-clock watchdogs that kill runaways (`jail.py:118-147`). A Docker backend exists in the same module and is marked **DRAFT**, not live-verified. |
 
 ### Deny-by-default gate (`gate.py`)
 
@@ -117,7 +117,8 @@ demonstrates the block; "Not covered" means out of scope for this reference laye
 | Command substitution / shell expansion | **Covered** | `$()`, backticks, `${}` rejected (`gate.py:285-286`, `test_gate.py:55`). |
 | Shell redirects | **Covered** | `>`/`<` including glued forms (`gate.py:287-289`, `test_gate.py:75-86`). |
 | Chaining / newline-separated second command | **Covered** | Per-segment allowlist including newline/CR (`gate.py:120,189-212,290-305`, `test_gate.py:59,90`). |
-| Arbitrary code inside an allowed program writing outside the sandbox | **Covered (jail, macOS Seatbelt)** | `(deny file-write*)` minus the sandbox subpath (`jail.py:55-64`, `test_jail.py`). |
+| Arbitrary code inside an allowed program writing outside the sandbox directly | **Covered (jail, macOS Seatbelt)** | `(deny file-write*)` minus the sandbox subpath, for the jailed process's own writes (`jail.py:55-64`, `test_jail.py`). |
+| Arbitrary code inside an allowed program causing a write outside the sandbox indirectly (0.1.3, `Cell`/jail library path) | **Not covered** | The policy file (`<workdir>/.jail.sb`) and run log (`<workdir>/.run_out`) sit inside the writable sandbox: a jailed process can rewrite the policy that a later run reads back, or plant a symlink that the trusted parent writes through (`jail.py:94-98,110-115,123-128`). The file tools resolve a path once, then open it by path, so a component swapped after the check is followed (`cell.py:264-293`). The credential shield is not affected. See the README Known issue. |
 | Child process escaping the sandbox | **Covered (jail, macOS Seatbelt)** | Children inherit the profile (`test_jail.py`). |
 | Memory / fork bomb, wall-clock runaway | **Covered (jail, macOS Seatbelt)** | RSS watchdog + wall-clock kill, proven live (`jail.py:118-147`, `test_jail.py`). |
 | Ledger tamper / reorder after the fact | **Covered (evident, not prevented)** | Detected on `verify()`; see §4 (`ledger.py:231-238,262-265`, `test_ledger.py`). |
@@ -133,13 +134,13 @@ demonstrates the block; "Not covered" means out of scope for this reference laye
 | Universal/production security policy | **Not covered** | Defaults are a coding-agent sandbox, overridable; this is a reference primitive, not a hardened production sandbox. |
 
 **Continuously-verified vs. historical red-team.** The macOS jail tests that run on
-every test run cover network egress, write-out, child-process containment,
+every test run cover network egress, the jailed process's own write-out, child-process containment,
 memory-bomb kill, and wall-clock kill live, against the real `sandbox-exec`
 (`test_jail.py:68-102,115-130`). Separately, a documented development red-team recorded 0 of
 9 escape attempts succeeding against the jail, including the two real Seatbelt
 bypasses — `osascript 'do shell script'` (the spawned shell stays sandboxed) and
 `launchctl submit` (no stray job left) — plus loopback `/dev/tcp` egress, DNS, and
-symlink/hardlink/rename writes-out. Those nine are a development record, not a
+symlink/hardlink/rename writes-out attempted directly by the jailed process. Those nine are a development record, not a
 continuously-run suite; the live coverage above is what runs in CI.
 
 ---
