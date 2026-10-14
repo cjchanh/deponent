@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0
+
+SDK and API documentation, and repository hygiene. No core changes; gate, ledger, jail, receipts, cell and shield are as in 0.1.3.
+
+- **Added documentation**: `API_SURFACE.md` (the public API surface, with a compatibility matrix for migrating from an earlier gate implementation), `README_SDK.md` (SDK quickstart), `docs/RUST_ADAPTER_SPEC.md` (the language-neutral Rust-kernel adapter contract), `docs/THREAT_MODEL.md` (assets, adversaries, trust boundaries, residual risks).
+- **Removed non-public files**: `UPGRADE_REPORT.md` and the `.githooks/` directory — neither belongs in a public release tree.
+- **Version bump** 0.1.3 → 0.2.0, with release metadata kept consistent (`pyproject.toml`, `deponent.__version__`, the `SPEC.md` version statements, and the conformance pins that track them).
+
 ## 0.1.3
 
 Credential shield, and ledger verification that fails closed on missing, empty or forked testimony. Callers that used to get a success on these ledger inputs now get a refusal.
